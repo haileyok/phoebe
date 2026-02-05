@@ -52,7 +52,8 @@ class AnthropicClient(AgentClient):
         if tools:
             kwargs["tools"] = tools
 
-        return await self._client.messages.create(**kwargs)  # type: ignore
+        async with self._client.messages.stream(**kwargs) as stream:  # type: ignore
+            return await stream.get_final_message()
 
 
 class Agent:
@@ -91,7 +92,7 @@ class Agent:
             return {"error": f"Unknown tool: {tool_use.name}"}
 
     async def chat(self, user_message: str) -> str:
-        """Send a message and get a response, handling tool calls."""
+        """send a message and get a response, handling tool calls"""
         self._conversation.append({"role": "user", "content": user_message})
 
         while True:
@@ -126,7 +127,20 @@ class Agent:
                 tool_results: list[dict[str, Any]] = []
                 for block in resp.content:
                     if isinstance(block, ToolUseBlock):
+                        code = (
+                            block.input.get("code", "")
+                            if isinstance(block.input, dict)  # type: ignore
+                            else ""
+                        )
+                        logger.info("Tool call: %s\n%s", block.name, code)
                         result = await self._handle_tool_call(block)
+                        is_error = "error" in result
+                        summary = str(result)[:500]
+                        logger.info(
+                            "Tool result (%s): %s",
+                            "error" if is_error else "ok",
+                            summary,
+                        )
                         tool_results.append(
                             {
                                 "type": "tool_result",

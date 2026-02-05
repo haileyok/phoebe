@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 from typing import Literal
 
 import click
@@ -14,40 +15,43 @@ from src.tools.executor import ToolExecutor
 from src.tools.registry import TOOL_REGISTRY, ToolContext
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 
 logger = logging.getLogger(__name__)
 
 
-@click.command()
-@click.option("--clickhouse-host")
-@click.option("--clickhouse-port")
-@click.option("--clickhouse-user")
-@click.option("--clickhouse-password")
-@click.option("--clickhouse-database")
-@click.option("--bootstrap-server")
-@click.option("--input-topic")
-@click.option("--group-id")
-@click.option("--osprey-base-url")
-@click.option("--model-api")
-@click.option("--model-name")
-@click.option("--model-api-key")
-def main(
+SHARED_OPTIONS: list[Callable[..., Callable[..., object]]] = [
+    click.option("--clickhouse-host"),
+    click.option("--clickhouse-port"),
+    click.option("--clickhouse-user"),
+    click.option("--clickhouse-password"),
+    click.option("--clickhouse-database"),
+    click.option("--osprey-base-url"),
+    click.option("--model-api"),
+    click.option("--model-name"),
+    click.option("--model-api-key"),
+]
+
+
+def shared_options[F: Callable[..., object]](func: F) -> F:
+    for option in reversed(SHARED_OPTIONS):
+        func = option(func)  # type: ignore[assignment]
+    return func
+
+
+def build_services(
     clickhouse_host: str | None,
     clickhouse_port: int | None,
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    bootstrap_server: str | None,
-    input_topic: str | None,
-    group_id: str | None,
     osprey_base_url: str | None,
-    model_api: Literal["anthropic", "openai", "openapi"],
+    model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
-):
+) -> tuple[Clickhouse, ToolExecutor, Agent]:
     http_client = httpx.AsyncClient()
 
     clickhouse = Clickhouse(
@@ -57,13 +61,6 @@ def main(
         password=clickhouse_password or CONFIG.clickhouse_password,
         database=clickhouse_database or CONFIG.clickhouse_database,
     )
-
-    # indexer = Indexer(
-    #     bootstrap_servers=[bootstrap_server or CONFIG.bootstrap_server],
-    #     input_topic=input_topic or CONFIG.input_topic,
-    #     group_id=group_id or CONFIG.group_id,
-    #     clickhouse=clickhouse,
-    # )
 
     osprey = Osprey(
         http_client=http_client,
@@ -90,7 +87,42 @@ def main(
         tool_executor=executor,
     )
 
+    return clickhouse, executor, agent
+
+
+@click.group()
+def cli():
+    pass
+
+
+@cli.command()
+@shared_options
+def main(
+    clickhouse_host: str | None,
+    clickhouse_port: int | None,
+    clickhouse_user: str | None,
+    clickhouse_password: str | None,
+    clickhouse_database: str | None,
+    osprey_base_url: str | None,
+    model_api: Literal["anthropic", "openai", "openapi"] | None,
+    model_name: str | None,
+    model_api_key: str | None,
+):
+    clickhouse, executor, agent = build_services(
+        clickhouse_host=clickhouse_host,
+        clickhouse_port=clickhouse_port,
+        clickhouse_user=clickhouse_user,
+        clickhouse_password=clickhouse_password,
+        clickhouse_database=clickhouse_database,
+        osprey_base_url=osprey_base_url,
+        model_api=model_api,
+        model_name=model_name,
+        model_api_key=model_api_key,
+    )
+
     async def run():
+        await clickhouse.initialize()
+        await executor.initialize()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(agent.run())
 
@@ -100,5 +132,55 @@ def main(
         logger.info("received keyboard interrupt")
 
 
+@cli.command(name="chat")
+@shared_options
+def chat(
+    clickhouse_host: str | None,
+    clickhouse_port: int | None,
+    clickhouse_user: str | None,
+    clickhouse_password: str | None,
+    clickhouse_database: str | None,
+    osprey_base_url: str | None,
+    model_api: Literal["anthropic", "openai", "openapi"] | None,
+    model_name: str | None,
+    model_api_key: str | None,
+):
+    clickhouse, executor, agent = build_services(
+        clickhouse_host=clickhouse_host,
+        clickhouse_port=clickhouse_port,
+        clickhouse_user=clickhouse_user,
+        clickhouse_password=clickhouse_password,
+        clickhouse_database=clickhouse_database,
+        osprey_base_url=osprey_base_url,
+        model_api=model_api,
+        model_name=model_name,
+        model_api_key=model_api_key,
+    )
+
+    async def run():
+        await clickhouse.initialize()
+        await executor.initialize()
+        logger.info("Services initialized. Starting interactive chat.")
+        print("\nAgent ready. Type your message (Ctrl+C to exit).\n")
+
+        while True:
+            try:
+                user_input = input("You: ")
+            except EOFError:
+                break
+
+            if not user_input.strip():
+                continue
+
+            logger.info("User: %s", user_input)
+            response = await agent.chat(user_input)
+            print(f"\nAgent: {response}\n")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\nExiting.")
+
+
 if __name__ == "__main__":
-    main()
+    cli()

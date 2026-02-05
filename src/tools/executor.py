@@ -9,16 +9,26 @@ from src.tools.registry import ToolContext, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# Path to the Deno runtime files
 DENO_DIR = Path(__file__).parent / "deno"
 
 
 class ToolExecutor:
-    """An executor that runs Typescript code in a deno subprocess"""
+    """executor that runs Typescript code in a deno subprocess"""
 
     def __init__(self, registry: ToolRegistry, ctx: ToolContext) -> None:
         self._registry = registry
         self._ctx = ctx
+        self._database_schema: str | None = None
+
+    async def initialize(self) -> None:
+        # go ahead and prefetch the database for inclusion in the prompt, so that the agent doesn't waste a tool call getting it on its own
+        try:
+            schema = await self._registry.execute(self._ctx, "clickhouse.getSchema", {})
+            lines = [f"  {col['name']} ({col['type']})" for col in schema]
+            self._database_schema = "\n".join(lines)
+            logger.info("Prefetched database schema (%d columns)", len(schema))
+        except Exception:
+            logger.warning("Failed to prefetch database schema", exc_info=True)
 
     async def execute_code(self, code: str) -> dict[str, Any]:
         """
@@ -26,13 +36,6 @@ class ToolExecutor:
 
         code has access to tools defined in the registry via the generated typescript
         stubs. calls are bridged to pythin via stdin/out
-
-        Returns:
-            A dict with keys:
-            - "success": bool
-            - "output": The final output (if any)
-            - "debug": List of debug messages
-            - "error": Error message (if failed)
         """
 
         self._write_generated_tools()
@@ -118,7 +121,7 @@ export {{ tools }};
                         result = await self._registry.execute(
                             self._ctx, tool_name, params
                         )
-                        response = json.dumps({"__tool_result__": result})
+                        response = json.dumps({"__tool_result__": result}, default=str)
                     except Exception as e:
                         logger.exception(f"Tool error: {tool_name}")
                         response = json.dumps({"__tool_error__": str(e)})
@@ -175,6 +178,18 @@ export {{ tools }};
 
         tool_docs = self._registry.generate_tool_documentation()
 
+        schema_section = ""
+        if self._database_schema:
+            schema_section = f"""
+
+# Database Schema
+
+The `default.osprey_execution_results` table has these columns:
+{self._database_schema}
+
+Use these exact column names when writing SQL queries. Do NOT guess column names.
+"""
+
         description = f"""Execute Typescript code in a sandboxed Deno runtime.
 
 The code has access to backend tools via the `tools` namespace. Use `output()` to return results.
@@ -185,7 +200,7 @@ const result = await tools.clickhouse.query("SELECT count() FROM events");
 output(result);
 ```
 
-{tool_docs}"""
+{tool_docs}{schema_section}"""
 
         return {
             "name": "execute_code",

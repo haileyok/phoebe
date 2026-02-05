@@ -7,6 +7,11 @@ from src.tools.registry import (
     TOOL_REGISTRY,
 )
 
+# Import tool definitions so they register themselves with TOOL_REGISTRY
+import src.tools.definitions.clickhouse  # noqa: F401
+import src.tools.definitions.osprey  # noqa: F401
+import src.tools.definitions.ozone  # noqa: F401
+
 __all__ = [
     "Tool",
     "ToolContext",

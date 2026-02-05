@@ -10,3 +10,7 @@ Phoebe interfaces with the following tools:
 - [Clickhouse](https://clickhouse.com/)
 
 Phoebe can be used with Anthropic, OpenAI, and OpenAPI-compatible model APIs.
+
+## Usage
+
+TBD. Right now, you can talk to the agent through `uv run main.py chat` and ask for assistance with Osprey-related tasks.
