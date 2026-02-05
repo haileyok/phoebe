@@ -46,8 +46,13 @@ class Config(BaseSettings):
     ozone_allowed_labels: str = ""
     """comma separated list of labels that Phoebe is allowed to apply. both specified to the agent via prompting and validated before applying labels directly"""
 
+    # osprey config
     osprey_base_url: str = ""
     """the base url for your osprey instance"""
+    osprey_repo_url: str = "https://github.com/roostorg/osprey"
+    """the url to fetch the osprey codebase from. used for letting the agent validate written rules directly"""
+    osprey_ruleset_url: str = "https://github.com/haileyok/atproto-ruleset"
+    """the url to fetch the osprey ruleset you are running. used when validating written rules (i.e. for having the needed features available for validation)"""
 
     model_config = SettingsConfigDict(env_file=".env")
 

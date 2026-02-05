@@ -29,6 +29,8 @@ SHARED_OPTIONS: list[Callable[..., Callable[..., object]]] = [
     click.option("--clickhouse-password"),
     click.option("--clickhouse-database"),
     click.option("--osprey-base-url"),
+    click.option("--osprey-repo-url"),
+    click.option("--osprey-ruleset-url"),
     click.option("--model-api"),
     click.option("--model-name"),
     click.option("--model-api-key"),
@@ -48,10 +50,12 @@ def build_services(
     clickhouse_password: str | None,
     clickhouse_database: str | None,
     osprey_base_url: str | None,
+    osprey_repo_url: str | None,
+    osprey_ruleset_url: str | None,
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
-) -> tuple[Clickhouse, ToolExecutor, Agent]:
+) -> tuple[Clickhouse, Osprey, ToolExecutor, Agent]:
     http_client = httpx.AsyncClient()
 
     clickhouse = Clickhouse(
@@ -65,6 +69,8 @@ def build_services(
     osprey = Osprey(
         http_client=http_client,
         base_url=osprey_base_url or CONFIG.osprey_base_url,
+        osprey_repo_url=osprey_repo_url or CONFIG.osprey_repo_url,
+        osprey_ruleset_url=osprey_ruleset_url or CONFIG.osprey_ruleset_url,
     )
 
     ozone = Ozone()
@@ -87,7 +93,7 @@ def build_services(
         tool_executor=executor,
     )
 
-    return clickhouse, executor, agent
+    return clickhouse, osprey, executor, agent
 
 
 @click.group()
@@ -104,17 +110,21 @@ def main(
     clickhouse_password: str | None,
     clickhouse_database: str | None,
     osprey_base_url: str | None,
+    osprey_repo_url: str | None,
+    osprey_ruleset_url: str | None,
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
 ):
-    clickhouse, executor, agent = build_services(
+    clickhouse, osprey, executor, agent = build_services(
         clickhouse_host=clickhouse_host,
         clickhouse_port=clickhouse_port,
         clickhouse_user=clickhouse_user,
         clickhouse_password=clickhouse_password,
         clickhouse_database=clickhouse_database,
         osprey_base_url=osprey_base_url,
+        osprey_repo_url=osprey_repo_url or CONFIG.osprey_repo_url,
+        osprey_ruleset_url=osprey_ruleset_url or CONFIG.osprey_ruleset_url,
         model_api=model_api,
         model_name=model_name,
         model_api_key=model_api_key,
@@ -123,6 +133,7 @@ def main(
     async def run():
         await clickhouse.initialize()
         await executor.initialize()
+        await osprey.initialize()
         async with asyncio.TaskGroup() as tg:
             tg.create_task(agent.run())
 
@@ -141,17 +152,21 @@ def chat(
     clickhouse_password: str | None,
     clickhouse_database: str | None,
     osprey_base_url: str | None,
+    osprey_repo_url: str | None,
+    osprey_ruleset_url: str | None,
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
 ):
-    clickhouse, executor, agent = build_services(
+    clickhouse, osprey, executor, agent = build_services(
         clickhouse_host=clickhouse_host,
         clickhouse_port=clickhouse_port,
         clickhouse_user=clickhouse_user,
         clickhouse_password=clickhouse_password,
         clickhouse_database=clickhouse_database,
         osprey_base_url=osprey_base_url,
+        osprey_repo_url=osprey_repo_url or CONFIG.osprey_repo_url,
+        osprey_ruleset_url=osprey_ruleset_url or CONFIG.osprey_ruleset_url,
         model_api=model_api,
         model_name=model_name,
         model_api_key=model_api_key,
@@ -160,6 +175,7 @@ def chat(
     async def run():
         await clickhouse.initialize()
         await executor.initialize()
+        await osprey.initialize()
         logger.info("Services initialized. Starting interactive chat.")
         print("\nAgent ready. Type your message (Ctrl+C to exit).\n")
 
