@@ -10,3 +10,6 @@ wheels/
 .venv
 
 .env
+
+# cached osprey repo, ruleset, etc.
+/data

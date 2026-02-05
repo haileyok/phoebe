@@ -19,3 +19,180 @@ On top of these abilities, I am also given the ability to
 - Prefer doing multiple steps in a single `execute_code` call rather than making separate calls.
 - When a tool call fails, read the error carefully before retrying. Adjust your approach based on the error message rather than guessing.
 """
+
+# this is an evolving document. we want this to be as concise and small as possible for token efficiency, yet we do want it to be descriptive enough for the agent
+# to reliably one-shot rules. there's a tradeoff here: either A. the agent makes more mistakes and can fix them through osprey rule validation (but at the cost of
+# additional tool calls...) or B. can receive more tokens up-front for documentation. we absolutely want to take option B when possible!
+#
+# another thing to keep in mind! we are _not_ exposing the agent to the existing ruleset's codebase _at the moment_, the way that say claude code would have access
+# to it. on one hand, this is probably something we want to do later! but for now, the goal is to make the agent itself - without context - as efficient and
+# and accurate as possible at writing rules.
+OSPREY_RULE_GUIDANCE = """
+# Writing Osprey Rules
+
+Rules are written in SML (Python/Starlark-like). Follow this workflow:
+
+1. Understand the target behavior and its signals
+2. Check available features (`get_osprey_features`), UDFs (`get_available_udfs`), labels (`get_available_labels`), and example rules (`get_example_rules`)
+3. Write models → rules → effects
+4. Save with `save_rule`
+
+## Project Structure
+
+```
+example-rules/
+|  rules/
+|  |  record/
+|  |  |  post/
+|  |  |  |  first_post_link.sml
+|  |  |  |  index.sml
+|  |  |  like/
+|  |  |  |  like_own_post.sml
+|  |  |  |  index.sml
+|  |  account/
+|  |  |  signup/
+|  |  |  |  high_risk_signup.sml
+|  |  |  |  index.sml
+|  |  index.sml
+|  models/
+|  |  record/
+|  |  |  post.sml
+|  |  |  like.sml
+|  |  account/
+|  |  |  signup.sml
+|  main.sml
+```
+
+Use `index.sml` files for conditional execution logic per directory.
+
+## Models
+
+Define models per event type. Use a hierarchy to avoid duplication:
+- `base.sml` — features in every event (user IDs, handles, account stats)
+- `account_base.sml` — all account events
+- `record_base.sml` — all record events
+
+```python
+# models/base.sml
+EventType = JsonData(path='$.eventType')
+UserId: Entity[str] = EntityJson(type='UserId', path='$.user.userId')
+Handle: Entity[str] = EntityJson(type='Handle', path='$.user.handle')
+PostCount: int = JsonData(path='$.user.postCount')
+AccountAgeSeconds: int = JsonData(path='$.user.accountAgeSeconds')
+```
+
+```python
+# models/record/post.sml
+PostId: Entity[str] = EntityJson(type='PostId', path='$.postId')
+PostText: str = JsonData(path='$.text')
+MentionIds: List[str] = JsonData(path='$.mentionIds')
+EmbedLink: Optional[str] = JsonData(path='$.embedLink', required=False)
+ReplyId: Entity[str] = JsonData(path='$.replyId', required=False)
+```
+
+Use `EntityJson` (not `JsonData`) for ID values — enables better exploration in the Osprey UI.
+
+## Rules
+
+A rule has `when_all` conditions and a `description`. Wire rules to effects with `WhenRules`.
+
+```python
+# rules/record/post/first_post_link.sml
+Import(rules=['models/base.sml', 'models/record/post.sml'])
+
+FirstPostLinkRule = Rule(
+    when_all=[
+        PostCount == 1,
+        EmbedLink != None,
+        ListLength(list=MentionIds) >= 1,
+    ],
+    description='First post for user includes a link embed',
+)
+
+WhenRules(
+    rules_any=[FirstPostLinkRule],
+    then=[
+        ReportRecord(
+            entity=PostId,
+            comment='This was the first post by a user and included a link',
+            severity=3,
+        ),
+    ],
+)
+```
+
+### Conditional Execution
+
+Use `Require` + `require_if` to scope rules to event types:
+
+```python
+# main.sml
+Require(rule='rules/index.sml')
+
+# rules/index.sml
+Import(rules=['models/base.sml'])
+Require(rule='rules/record/post/index.sml', require_if=EventType == 'userPost')
+
+# rules/record/post/index.sml
+Import(rules=['models/base.sml', 'models/record/post.sml'])
+Require(rule='rules/record/post/first_post_link.sml')
+```
+
+## Common Patterns
+
+**Chaining:**
+```python
+Basic = Rule(when_all=[Signal1], description='...')
+Escalated = Rule(when_all=[Basic, Signal2], description='...')
+```
+
+**Labels for state:**
+```python
+WasWarned = HasLabel(entity=UserId, label='warned')
+Repeat = Rule(when_all=[ViolatesPolicy, WasWarned], description='...')
+```
+
+**Combining signals:**
+```python
+HighRisk = Rule(
+    when_all=[
+        Signal1 or Signal2,  # either
+        Signal3,              # AND
+        not SafeCondition,    # AND NOT
+    ],
+    description='Multiple risk signals detected',
+)
+```
+
+**Tiered responses:**
+```python
+WhenRules(rules_any=[LowRisk, MediumRisk, HighRisk], then=[...])
+```
+
+## Key Guidelines
+
+- Descriptive rule names (e.g., `NewAccountSpamRule` not `Rule1`)
+- Guard optional fields: use `!= Null` checks or `required=False`
+- One concern per rule; combine via `WhenRules`
+- Prefer pre-extracted features over re-extracting data
+- Add meaningful descriptions (f-strings with entity identifiers are useful)
+"""
+
+
+def build_system_prompt():
+    """
+    Here we put together the base system prompt for the agent. The system prompt does _not_ change based on inputs, so that proper caching across sessions can take place.
+    For example, things that evolve - like the Osprey database schema or feature list - do not get included in the system prompt. That information _is_ still cached, but
+    is cached in a separate layer so that the system prompt does not become invalidated.
+
+    TODO: Once we build out the core toolset, we can actually include that inside of the system prompt, since the agent nor moderators/analysts are not able to directly
+    create new tools for the agent to use, and this will remain fairly stable. Only modifications to Phoebe directly will result in new tools being added/removed.
+
+    On top of the core agent prompt above, we also include basic documentation for both Osprey and Ozone. This documentation is the _stable_ documentation. The agent
+    receives (and can optionally fetch) information about available Osprey UDFs, features, etc. outside the system prompt.
+    """
+    system_prompt = f"""
+{AGENT_SYSTEM_PROMPT}
+
+
+    """

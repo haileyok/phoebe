@@ -35,13 +35,13 @@ class Config(BaseSettings):
     """for openapi model apis, the endpoint to use"""
 
     # ozone config
-    ozone_moderator_pds_host = ""
+    ozone_moderator_pds_host: str = ""
     """the PDS host for the moderator account that has at least moderator-level permissions in Ozone"""
-    ozone_moderator_identifier = ""
+    ozone_moderator_identifier: str = ""
     """the moderator account's identifier (handle)"""
-    ozone_moderator_password = ""
+    ozone_moderator_password: str = ""
     """the moderator account's password"""
-    ozone_labeler_account_did = ""
+    ozone_labeler_account_did: str = ""
     """the DID of the labeler account. this variable is not the same as the moderator account, though for purely-agentified ozone instances, they may be the same. not recommended, since that means you're giving the agent _admin_ permissions..."""
     ozone_allowed_labels: str = ""
     """comma separated list of labels that Phoebe is allowed to apply. both specified to the agent via prompting and validated before applying labels directly"""
