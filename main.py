@@ -21,6 +21,10 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# disable httpx verbose logging
+httpx_logger = logging.getLogger("httpx")
+httpx_logger.setLevel(logging.WARNING)
+
 
 SHARED_OPTIONS: list[Callable[..., Callable[..., object]]] = [
     click.option("--clickhouse-host"),
