@@ -8,8 +8,10 @@ Phoebe is an AI-powered trust and safety agent for the [AT Protocol](https://atp
 
 This allows it to:
 
-- **Rule Management** - Writes, validate, and deploys rules for Osprey
-- **Data Analysis** - Queries via Clickhouse to analyze what is happening on your network
+- **Rule Management** - Write, validate, and deploy rules for Osprey
+- **Data Analysis** - Query ClickHouse to analyze what is happening on your network
+- **Investigation** - Look up domains, IPs, URLs, and WHOIS records to investigate threats
+- **Content Detection** - Find similar posts to detect coordinated spam and templated abuse
 - **Moderation** - Apply labels and take moderation actions via Ozone (not actually implemented yet...)
 
 ## How It Works
@@ -17,14 +19,14 @@ This allows it to:
 Phoebe uses a model API as its reasoning backer. The agent writes and executes Typescript code in a sandboxed Deno runtime to interact with its tools — querying event data, creating safety rules, and managing moderation actions.
 
 ```
-┌──────────────────────────────────────┐
-│              Model API               │
-├──────────────────────────────────────┤
-│      Tool Execution (Deno Sandbox)   │
-├──────────┬───────────┬───────────────┤
-│  Osprey  │ ClickHouse│    Ozone      │
-│  (Rules) │ (Queries) │ (Moderation)  │
-└──────────┴───────────┴───────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                       Model API                         │
+├─────────────────────────────────────────────────────────┤
+│              Tool Execution (Deno Sandbox)              │
+├──────────┬───────────┬──────────────┬───────────────────┤
+│  Osprey  │ ClickHouse│    Ozone     │  Investigation    │
+│  (Rules) │ (Queries) │ (Moderation) │ (Domain/IP/WHOIS) │
+└──────────┴───────────┴──────────────┴───────────────────┘
 ```
 
 #### Why not traditional tool calling?
@@ -36,6 +38,36 @@ chain these calls together. For example, if the agent knows it wants to grab the
 
 When executing code inside of Deno, Deno is ran with the bare minimum of permissions. For example, it cannot access the file system, the network (local or remote), or use NPM packages. Both execution time and memory limits are applied. All network requests are done in Python,
 in code that _you_ write, not the agent.
+
+| Limit | Value |
+|-------|-------|
+| Max code size | 50,000 characters |
+| Max tool calls per execution | 25 |
+| Max output size | 1 MB |
+| Execution timeout | 60 seconds |
+| V8 heap memory | 256 MB |
+
+## Tools
+
+Phoebe has access to the following tools, organized by namespace:
+
+| Namespace | Tool | Description |
+|-----------|------|-------------|
+| `clickhouse` | `query(sql)` | Execute SQL queries against Clickhouse |
+| `clickhouse` | `getSchema()` | Get the table schema and column info |
+| `osprey` | `getConfig()` | Get available features, labels, rules, and actions |
+| `osprey` | `getUdfs()` | Get available UDFs for rule writing |
+| `osprey` | `listRuleFiles(directory?)` | List existing `.sml` rule files |
+| `osprey` | `readRuleFile(file_path)` | Read an existing rule file |
+| `osprey` | `saveRule(file_path, content)` | Save or create a rule file |
+| `osprey` | `validateRules()` | Validate the ruleset |
+| `content` | `similarity(text, threshold?, limit?)` | Find similar posts using n-gram distance |
+| `domain` | `checkDomain(domain)` | DNS lookups and HTTP status checks |
+| `ip` | `lookup(ip)` | GeoIP and ASN lookups |
+| `url` | `expand(url)` | Follow redirect chains and detect shorteners |
+| `whois` | `lookup(domain)` | Domain registration and WHOIS info |
+| `ozone` | `applyLabel(subject, label)` | Apply a moderation label (not yet implemented) |
+| `ozone` | `removeLabel(subject, label)` | Remove a moderation label (not yet implemented) |
 
 ## Prerequisites
 
@@ -58,6 +90,10 @@ Create a `.env` file in the project root:
 # Required
 MODEL_API_KEY="sk-ant-api03-..."
 MODEL_NAME="claude-sonnet-4-5-20250929"
+
+# Optional - Model API backend (default: anthropic)
+# MODEL_API="anthropic"  # or "openai", "openapi"
+# MODEL_ENDPOINT=""       # required for openapi, ie https://api.moonshot.ai/v1/completions
 
 # Osprey
 OSPREY_BASE_URL="http://localhost:5004"

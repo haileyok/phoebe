@@ -106,8 +106,8 @@ class ToolRegistry:
         if len(params) == 1:
             param_names = {p.name for p in tool.parameters}
             val = next(iter(params.values()))
-            if isinstance(val, dict) and set(val.keys()) <= param_names:
-                params = val
+            if isinstance(val, dict) and set(val.keys()) <= param_names:  # ignore: type
+                params = val  # type: ignore
 
         return await tool.handler(ctx, **params)
 

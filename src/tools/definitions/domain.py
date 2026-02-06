@@ -40,7 +40,7 @@ async def _query_dns(
 
         if record_type == "SOA":
             # soa returns a single answer
-            return str(answers[0]) if answers else None
+            return str(answers[0]) if answers else None  # type: ignore
         elif record_type == "MX":
             # mx have priority
             return [f"{answer.preference} {answer.exchange}" for answer in answers]
@@ -55,14 +55,14 @@ async def _query_dns(
             ]
         else:
             return [str(answer) for answer in answers]
-    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
+    except (resolver.NoAnswer, resolver.NXDOMAIN, resolver.NoNameservers):  # type: ignore
         return [] if record_type != "SOA" else None
     except Exception:
         return [] if record_type != "SOA" else None
 
 
 @TOOL_REGISTRY.tool(
-    name="clickhouse.query",
+    name="domain.checkDomain",
     description="Lookup A, AAAA, NS, MX, TXT, CNAME, and SOA for a given input domain",
     parameters=[
         ToolParameter(
@@ -93,17 +93,17 @@ async def check_domain(ctx: ToolContext, domain: str):
         dns_results = await asyncio.gather(*dns_tasks.values(), return_exceptions=True)
         dns_data = dict(zip(dns_tasks.keys(), dns_results))
 
-        a_records = (
+        a_records = (  # type: ignore
             dns_data.get("a", [])
             if not isinstance(dns_data.get("a"), Exception)
             else []
         )
-        aaaa_records = (
+        aaaa_records = (  # type: ignore
             dns_data.get("aaaa", [])
             if not isinstance(dns_data.get("aaaa"), Exception)
             else []
         )
-        cname_records = (
+        cname_records = (  # type: ignore
             dns_data.get("cname", [])
             if not isinstance(dns_data.get("cname"), Exception)
             else []
@@ -114,9 +114,9 @@ async def check_domain(ctx: ToolContext, domain: str):
         result: dict[str, Any] = {
             "success": True,
             "domain": domain,
-            "resolves": len(a_records) > 0
-            or len(aaaa_records) > 0
-            or len(cname_records) > 0,
+            "resolves": len(a_records) > 0  # type: ignore
+            or len(aaaa_records) > 0  # type: ignore
+            or len(cname_records) > 0,  # type: ignore
             "dns": {
                 "a": a_records,
                 "aaaa": aaaa_records,
