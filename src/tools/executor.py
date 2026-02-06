@@ -11,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 DENO_DIR = Path(__file__).parent / "deno"
 
+# security limits for deno execution
+MAX_CODE_SIZE = 50_000  # max input code size in characters
+MAX_TOOL_CALLS = 25  # max number of tool calls per execution
+MAX_OUTPUT_SIZE = 1_000_000  # max total output size in bytes
+MAX_EXECUTION_TIME = 60.0  # total wall-clock timeout in seconds
+DENO_MEMORY_LIMIT_MB = 256  # v8 heap limit
+
 
 class ToolExecutor:
     """executor that runs Typescript code in a deno subprocess"""
@@ -37,7 +44,9 @@ class ToolExecutor:
 
         try:
             config = await self._registry.execute(self._ctx, "osprey.getConfig", {})
-            feature_lines = [f"  {name}: {ftype}" for name, ftype in config["features"].items()]
+            feature_lines = [
+                f"  {name}: {ftype}" for name, ftype in config["features"].items()
+            ]
             self._osprey_features = "\n".join(feature_lines)
 
             label_lines = [
@@ -84,6 +93,13 @@ class ToolExecutor:
         stubs. calls are bridged to pythin via stdin/out
         """
 
+        if len(code) > MAX_CODE_SIZE:
+            return {
+                "success": False,
+                "error": f"code too large ({len(code)} chars, max {MAX_CODE_SIZE})",
+                "debug": [],
+            }
+
         self._write_generated_tools()
 
         import tempfile
@@ -117,12 +133,23 @@ export {{ tools }};
     async def _run_deno(self, script_path: str) -> dict[str, Any]:
         """run the input script in a deno subprocess"""
 
-        # spawn a subprocess that executes deno. the deno sandbox has no permissions for network, execing, etc
-        # all it can do is read the input directory and read/write from stdin/out
+        # spawn a subprocess that executes deno with minimal permissions. explicit deny flags
+        # ensure these can't be escalated via dynamic imports or permission prompts.
+        deno_read_path = str(DENO_DIR)
         process = await asyncio.create_subprocess_exec(
             "deno",
             "run",
-            "--allow-read=" + str(DENO_DIR),  # allow just reading of the deno directory
+            f"--allow-read={deno_read_path}",
+            "--deny-write",
+            "--deny-net",
+            "--deny-run",
+            "--deny-env",
+            "--deny-ffi",
+            "--deny-sys",
+            "--no-prompt",
+            "--no-remote",
+            "--no-npm",
+            f"--v8-flags=--max-old-space-size={DENO_MEMORY_LIMIT_MB}",
             script_path,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -136,11 +163,24 @@ export {{ tools }};
         outputs: list[Any] = []
         debug_messages: list[str] = []
         error: str | None = None
+        tool_call_count = 0
+        total_output_bytes = 0
+        deadline = asyncio.get_event_loop().time() + MAX_EXECUTION_TIME
 
         try:
             while True:
-                # start reading the response from deno, with a 30 second timeout
-                line = await asyncio.wait_for(process.stdout.readline(), timeout=30.0)
+                # calculate remaining time against the total execution deadline
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    process.kill()
+                    error = f"execution timed out after {MAX_EXECUTION_TIME:.0f} seconds (total)"
+                    break
+
+                # read next line with the lesser of 30s or remaining wall-clock time
+                read_timeout = min(30.0, remaining)
+                line = await asyncio.wait_for(
+                    process.stdout.readline(), timeout=read_timeout
+                )
 
                 # if there are no more lines we're finished...
                 if not line:
@@ -149,6 +189,13 @@ export {{ tools }};
                 line_str = line.decode().strip()
                 if not line_str:
                     continue
+
+                # track total output size to prevent stdout flooding
+                total_output_bytes += len(line)
+                if total_output_bytes > MAX_OUTPUT_SIZE:
+                    process.kill()
+                    error = f"output exceeded {MAX_OUTPUT_SIZE} bytes, killed"
+                    break
 
                 try:
                     message = json.loads(line_str)
@@ -159,6 +206,12 @@ export {{ tools }};
                 # whenever we encounter a tool call, we then need to execute that tool and give
                 # it the response
                 if "__tool_call__" in message:
+                    tool_call_count += 1
+                    if tool_call_count > MAX_TOOL_CALLS:
+                        process.kill()
+                        error = f"exceeded maximum of {MAX_TOOL_CALLS} tool calls"
+                        break
+
                     tool_name = message["tool"]
                     params = message["params"]
                     logger.info(f"Tool call: {tool_name} with params: {params}")
@@ -187,8 +240,8 @@ export {{ tools }};
         # make sure that we kill deno subprocess if the execution times out
         except asyncio.TimeoutError:
             process.kill()
-            error = "execution timed out after 30 seconds"
-        # also kill it for any other exceptiosn we encounter
+            error = "execution timed out"
+        # also kill it for any other exceptions we encounter
         except Exception as e:
             process.kill()
             error = str(e)

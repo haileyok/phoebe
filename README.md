@@ -1,4 +1,4 @@
-# Phoebe - AI Trust & Safety Agent for ATProto
+# Phoebe
 
 Phoebe is an AI-powered trust and safety agent for the [AT Protocol](https://atproto.com/) network. It automates safety operations by analyzing network threats and creating rules to detect and resolve emerging issues. Phoebe uses three different services to achieve this:
 
@@ -33,6 +33,9 @@ See [Cloudflare's blog post](https://blog.cloudflare.com/code-mode/) on this top
 
 One of the largest benefits of letting the agent write and execute its own code is that it allows for tool chaining and grouping. Traditionally, each subsequent tool call results in a round trip for _each_ tool call. When the agent can write its own code, it can instead
 chain these calls together. For example, if the agent knows it wants to grab the results of _three separate_ SQL queries, it can group all three of those calls in a single `execute_code` block and receive the context.
+
+When executing code inside of Deno, Deno is ran with the bare minimum of permissions. For example, it cannot access the file system, the network (local or remote), or use NPM packages. Both execution time and memory limits are applied. All network requests are done in Python,
+in code that _you_ write, not the agent.
 
 ## Prerequisites
 
