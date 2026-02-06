@@ -603,6 +603,7 @@ dependencies = [
     { name = "atproto" },
     { name = "click" },
     { name = "clickhouse-connect" },
+    { name = "dnspython" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
 ]
@@ -614,6 +615,7 @@ requires-dist = [
     { name = "atproto", specifier = ">=0.0.65" },
     { name = "click", specifier = ">=8.3.1" },
     { name = "clickhouse-connect", specifier = ">=0.10.0" },
+    { name = "dnspython", specifier = ">=2.8.0" },
     { name = "pydantic", specifier = ">=2.12.5" },
     { name = "pydantic-settings", specifier = ">=2.12.0" },
 ]

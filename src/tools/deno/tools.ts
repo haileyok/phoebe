@@ -5,8 +5,8 @@ export const clickhouse = {
   /** Get Osprey/network table schema information including tables and their columns. Schema is for the table default.osprey_execution_results */
   getSchema: (): Promise<unknown> => callTool("clickhouse.getSchema", {}),
 
-  /** Execute a SQL query against ClickHouse and return the results. All queries must include a LIMIT, and all queries must be executed on default.osprey_execution_results. */
-  query: (sql: string): Promise<unknown> => callTool("clickhouse.query", { sql }),
+  /** Lookup A, AAAA, NS, MX, TXT, CNAME, and SOA for a given input domain */
+  query: (domain: string): Promise<unknown> => callTool("clickhouse.query", { domain }),
 };
 
 export const osprey = {

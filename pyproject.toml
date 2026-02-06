@@ -10,6 +10,7 @@ dependencies = [
     "atproto>=0.0.65",
     "click>=8.3.1",
     "clickhouse-connect>=0.10.0",
+    "dnspython>=2.8.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
 ]

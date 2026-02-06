@@ -1,4 +1,5 @@
 from typing import Any
+
 from clickhouse_connect import get_async_client  # type: ignore
 from clickhouse_connect.driver.asyncclient import AsyncClient  # type: ignore
 

@@ -1,13 +1,13 @@
-from abc import ABC, abstractmethod
 import asyncio
 import json
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
 
 import anthropic
-from anthropic.types import TextBlock, ToolUseBlock
 import httpx
+from anthropic.types import TextBlock, ToolUseBlock
 
 from src.agent.prompt import build_system_prompt
 from src.tools.executor import ToolExecutor
@@ -134,9 +134,7 @@ class OpenAICompatibleClient(AgentClient):
             json=payload,
         )
         if not resp.is_success:
-            logger.error(
-                "API error %d: %s", resp.status_code, resp.text[:1000]
-            )
+            logger.error("API error %d: %s", resp.status_code, resp.text[:1000])
             resp.raise_for_status()
         data = resp.json()
 
@@ -240,7 +238,11 @@ class OpenAICompatibleClient(AgentClient):
 
         stop_reason = "tool_use" if finish_reason == "tool_calls" else "end_turn"
         reasoning_content = message.get("reasoning_content")
-        return AgentResponse(content=content, stop_reason=stop_reason, reasoning_content=reasoning_content)
+        return AgentResponse(
+            content=content,
+            stop_reason=stop_reason,
+            reasoning_content=reasoning_content,
+        )
 
 
 MAX_TOOL_RESULT_LENGTH = 10_000
@@ -323,7 +325,10 @@ class Agent:
                         }
                     )
 
-            assistant_msg: dict[str, Any] = {"role": "assistant", "content": assistant_content}
+            assistant_msg: dict[str, Any] = {
+                "role": "assistant",
+                "content": assistant_content,
+            }
             if resp.reasoning_content:
                 assistant_msg["reasoning_content"] = resp.reasoning_content
             self._conversation.append(assistant_msg)
