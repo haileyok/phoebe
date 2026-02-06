@@ -69,7 +69,7 @@ class AnthropicClient(AgentClient):
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
-            "messages": messages,
+            "messages": self._inject_cache_breakpoints(messages),
         }
 
         if tools:
@@ -97,6 +97,42 @@ class AnthropicClient(AgentClient):
             content=content,
             stop_reason=msg.stop_reason or "end_turn",  # type: ignore TODO: fix this
         )
+
+    @staticmethod
+    def _inject_cache_breakpoints(
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """
+        a helper that adds cache_control breakpoints to the conversation so that
+        the conversation prefix is cached across successive calls. we place a single
+        breakpoint in th last message's content block, combined with the sys-prompt
+        and tool defs breakpoints. ensures that we stay in the 4-breakpoint limit
+        that ant requires
+        """
+        if not messages:
+            return messages
+
+        # shallow-copy the list so we don't mutate the caller's conversation
+        messages = list(messages)
+        last_msg = dict(messages[-1])
+        content = last_msg["content"]
+
+        if isinstance(content, str):
+            last_msg["content"] = [
+                {
+                    "type": "text",
+                    "text": content,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        elif isinstance(content, list) and content:
+            content = [dict(b) for b in content]
+            content[-1] = dict(content[-1])
+            content[-1]["cache_control"] = {"type": "ephemeral"}
+            last_msg["content"] = content
+
+        messages[-1] = last_msg
+        return messages
 
 
 class OpenAICompatibleClient(AgentClient):

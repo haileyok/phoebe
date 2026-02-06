@@ -208,6 +208,25 @@ ANY TIME that you write new rules, you must run the validator using your validat
 """
 
 
+CLICKHOUSE_SQL_TIPS = """
+# ClickHouse SQL Tips
+
+- **DateTime filtering**: The `__timestamp` column is `DateTime64(3)`. Do NOT use raw ISO strings. Use `parseDateTimeBestEffort()`:
+  ```sql
+  WHERE __timestamp >= parseDateTimeBestEffort('2026-02-06 04:30:00')
+  ```
+  To compute a relative time in TypeScript, format it as `YYYY-MM-DD HH:MM:SS`:
+  ```typescript
+  const ts = new Date(Date.now() - 30 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  ```
+- **Array slicing**: ClickHouse does NOT support `array[1:5]` syntax. Use `arraySlice(array, offset, length)`:
+  ```sql
+  arraySlice(groupArray(DISTINCT UserId), 1, 5) as sample_accounts
+  ```
+- **Error handling**: When running multiple independent queries, use `Promise.allSettled()` instead of `Promise.all()` so one failure doesn't crash the rest. Check each result's `.status` field.
+"""
+
+
 def build_system_prompt():
     """
     Here we put together the base system prompt for the agent. The system prompt does _not_ change based on inputs, so that proper caching across sessions can take place.
@@ -226,6 +245,8 @@ def build_system_prompt():
 # Osprey Documentation
 
 {OSPREY_RULE_GUIDANCE}
+
+{CLICKHOUSE_SQL_TIPS}
     """
 
     return system_prompt

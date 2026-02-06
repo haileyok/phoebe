@@ -9,9 +9,19 @@ export const clickhouse = {
   query: (sql: string): Promise<unknown> => callTool("clickhouse.query", { sql }),
 };
 
+export const content = {
+  /** Find similar posts in the network using ClickHouse's ngramDistance function. Useful for detecting coordinated spam, copypasta, or templated abuse content. Returns posts ordered by similarity score. */
+  similarity: (text: string, threshold?: number, limit?: number): Promise<unknown> => callTool("content.similarity", { text, threshold, limit }),
+};
+
 export const domain = {
   /** Lookup A, AAAA, NS, MX, TXT, CNAME, and SOA for a given input domain */
   checkDomain: (domain: string): Promise<unknown> => callTool("domain.checkDomain", { domain }),
+};
+
+export const ip = {
+  /** GeoIP and ASN lookup for an IP address. Returns geographic location (country, region, city, coordinates, timezone), network information (ISP, org, ASN), and flags for mobile, proxy, and hosting IPs. */
+  lookup: (ip: string): Promise<unknown> => callTool("ip.lookup", { ip }),
 };
 
 export const osprey = {
@@ -40,4 +50,14 @@ export const ozone = {
 
   /** Remove a moderation label from a subject (account or record) */
   removeLabel: (subject: string, label: string): Promise<unknown> => callTool("ozone.removeLabel", { subject, label }),
+};
+
+export const url = {
+  /** Follow a URL through its redirect chain (up to 10 hops), recording each hop's URL and HTTP status code. Flags known URL shorteners. Useful for investigating obfuscated or shortened links in spam/phishing content. */
+  expand: (url: string): Promise<unknown> => callTool("url.expand", { url }),
+};
+
+export const whois = {
+  /** Look up WHOIS registration data for a domain. Returns registrar, creation/expiration dates, name servers, registrant info, and domain age in days. Domain age is a key T&S signal — newly registered domains are heavily used for spam and phishing. */
+  lookup: (domain: string): Promise<unknown> => callTool("whois.lookup", { domain }),
 };
