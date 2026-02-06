@@ -38,6 +38,7 @@ SHARED_OPTIONS: list[Callable[..., Callable[..., object]]] = [
     click.option("--model-api"),
     click.option("--model-name"),
     click.option("--model-api-key"),
+    click.option("--model-endpoint"),
 ]
 
 
@@ -59,6 +60,7 @@ def build_services(
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
+    model_endpoint: str | None,
 ) -> tuple[Clickhouse, Osprey, ToolExecutor, Agent]:
     http_client = httpx.AsyncClient()
 
@@ -94,6 +96,7 @@ def build_services(
         model_api=model_api or CONFIG.model_api,
         model_name=model_name or CONFIG.model_name,
         model_api_key=model_api_key or CONFIG.model_api_key,
+        model_endpoint=model_endpoint or CONFIG.model_endpoint or None,
         tool_executor=executor,
     )
 
@@ -119,6 +122,7 @@ def main(
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
+    model_endpoint: str | None,
 ):
     clickhouse, osprey, executor, agent = build_services(
         clickhouse_host=clickhouse_host,
@@ -132,6 +136,7 @@ def main(
         model_api=model_api,
         model_name=model_name,
         model_api_key=model_api_key,
+        model_endpoint=model_endpoint,
     )
 
     async def run():
@@ -161,6 +166,7 @@ def chat(
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
+    model_endpoint: str | None,
 ):
     clickhouse, osprey, executor, agent = build_services(
         clickhouse_host=clickhouse_host,
@@ -174,6 +180,7 @@ def chat(
         model_api=model_api,
         model_name=model_name,
         model_api_key=model_api_key,
+        model_endpoint=model_endpoint,
     )
 
     async def run():

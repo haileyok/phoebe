@@ -130,6 +130,14 @@ export {{ tools }};
         tools_path = DENO_DIR / "tools.ts"
         tools_path.write_text(tools_ts)
 
+    @staticmethod
+    def _kill_process(process: asyncio.subprocess.Process) -> None:
+        """kill a subprocess, ignoring errors if it's already dead"""
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+
     async def _run_deno(self, script_path: str) -> dict[str, Any]:
         """run the input script in a deno subprocess"""
 
@@ -172,7 +180,7 @@ export {{ tools }};
                 # calculate remaining time against the total execution deadline
                 remaining = deadline - asyncio.get_event_loop().time()
                 if remaining <= 0:
-                    process.kill()
+                    self._kill_process(process)
                     error = f"execution timed out after {MAX_EXECUTION_TIME:.0f} seconds (total)"
                     break
 
@@ -193,7 +201,7 @@ export {{ tools }};
                 # track total output size to prevent stdout flooding
                 total_output_bytes += len(line)
                 if total_output_bytes > MAX_OUTPUT_SIZE:
-                    process.kill()
+                    self._kill_process(process)
                     error = f"output exceeded {MAX_OUTPUT_SIZE} bytes, killed"
                     break
 
@@ -208,7 +216,7 @@ export {{ tools }};
                 if "__tool_call__" in message:
                     tool_call_count += 1
                     if tool_call_count > MAX_TOOL_CALLS:
-                        process.kill()
+                        self._kill_process(process)
                         error = f"exceeded maximum of {MAX_TOOL_CALLS} tool calls"
                         break
 
@@ -225,8 +233,12 @@ export {{ tools }};
                         logger.exception(f"Tool error: {tool_name}")
                         response = json.dumps({"__tool_error__": str(e)})
 
-                    process.stdin.write((response + "\n").encode())
-                    await process.stdin.drain()
+                    try:
+                        process.stdin.write((response + "\n").encode())
+                        await process.stdin.drain()
+                    except (ConnectionResetError, BrokenPipeError):
+                        error = f"deno process exited while sending tool result for {tool_name}"
+                        break
 
                 elif "__output__" in message:
                     outputs.append(message["__output__"])
@@ -239,11 +251,11 @@ export {{ tools }};
 
         # make sure that we kill deno subprocess if the execution times out
         except asyncio.TimeoutError:
-            process.kill()
+            self._kill_process(process)
             error = "execution timed out"
         # also kill it for any other exceptions we encounter
         except Exception as e:
-            process.kill()
+            self._kill_process(process)
             error = str(e)
 
         await process.wait()
@@ -273,7 +285,7 @@ export {{ tools }};
         return result
 
     def get_execute_code_tool_definition(self) -> dict[str, Any]:
-        """get the anthropic tool definition for execute_code, including all the docs for available backend tools"""
+        """get tool definition for execute_code, including all the docs for available backend tools"""
 
         if self._tool_definition is not None:
             return self._tool_definition
@@ -290,6 +302,22 @@ The `default.osprey_execution_results` table has these columns:
 {self._database_schema}
 
 Use these exact column names when writing SQL queries. Do NOT guess column names.
+
+## ClickHouse SQL Tips
+
+- **DateTime filtering**: The `__timestamp` column is `DateTime64(3)`. Do NOT use raw ISO strings. Use `parseDateTimeBestEffort()`:
+  ```sql
+  WHERE __timestamp >= parseDateTimeBestEffort('2026-02-06 04:30:00')
+  ```
+  To compute a relative time in TypeScript, format it as `YYYY-MM-DD HH:MM:SS`:
+  ```typescript
+  const ts = new Date(Date.now() - 30 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+  ```
+- **Array slicing**: ClickHouse does NOT support `array[1:5]` syntax. Use `arraySlice(array, offset, length)`:
+  ```sql
+  arraySlice(groupArray(DISTINCT UserId), 1, 5) as sample_accounts
+  ```
+- **Error handling**: When running multiple independent queries, use `Promise.allSettled()` instead of `Promise.all()` so one failure doesn't crash the rest. Check each result's `.status` field.
 """
 
         osprey_section = ""
@@ -329,8 +357,16 @@ The code has access to backend tools via the `tools` namespace. Use `output()` t
 
 Example:
 ```typescript
-const result = await tools.clickhouse.query("SELECT count() FROM events");
-output(result);
+// format a relative timestamp for ClickHouse DateTime64 columns
+const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' ');
+
+// run multiple independent queries safely with Promise.allSettled
+const results = await Promise.allSettled([
+  tools.clickhouse.query(`SELECT Count() as cnt FROM default.osprey_execution_results WHERE __timestamp >= parseDateTimeBestEffort('${{thirtyMinAgo}}') LIMIT 1`),
+  tools.clickhouse.query(`SELECT UserId, Count() as n FROM default.osprey_execution_results WHERE __timestamp >= parseDateTimeBestEffort('${{thirtyMinAgo}}') GROUP BY UserId ORDER BY n DESC LIMIT 10`),
+]);
+
+output(results.map(r => r.status === 'fulfilled' ? r.value : r.reason?.message));
 ```
 
 {tool_docs}{schema_section}{osprey_section}"""

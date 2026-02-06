@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 import asyncio
+import json
 import logging
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import anthropic
 from anthropic.types import TextBlock, ToolUseBlock
-from pydantic import BaseModel
+import httpx
 
 from src.agent.prompt import build_system_prompt
 from src.tools.executor import ToolExecutor
@@ -13,9 +15,23 @@ from src.tools.executor import ToolExecutor
 logger = logging.getLogger(__name__)
 
 
-class Message(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str
+@dataclass
+class AgentTextBlock:
+    text: str
+
+
+@dataclass
+class AgentToolUseBlock:
+    id: str
+    name: str
+    input: dict[str, Any]
+
+
+@dataclass
+class AgentResponse:
+    content: list[AgentTextBlock | AgentToolUseBlock]
+    stop_reason: Literal["end_turn", "tool_use"]
+    reasoning_content: str | None = None
 
 
 class AgentClient(ABC):
@@ -25,7 +41,7 @@ class AgentClient(ABC):
         messages: list[dict[str, Any]],
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
-    ) -> anthropic.types.Message:
+    ) -> AgentResponse:
         pass
 
 
@@ -41,7 +57,7 @@ class AnthropicClient(AgentClient):
         messages: list[dict[str, Any]],
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
-    ) -> anthropic.types.Message:
+    ) -> AgentResponse:
         system_text = system or build_system_prompt()
         kwargs: dict[str, Any] = {
             "model": self._model_name,
@@ -57,12 +73,174 @@ class AnthropicClient(AgentClient):
         }
 
         if tools:
-            tools = [dict(t) for t in tools]  # shallow copy
+            tools = [dict(t) for t in tools]
             tools[-1]["cache_control"] = {"type": "ephemeral"}
             kwargs["tools"] = tools
 
         async with self._client.messages.stream(**kwargs) as stream:  # type: ignore
-            return await stream.get_final_message()
+            msg = await stream.get_final_message()
+
+        content: list[AgentTextBlock | AgentToolUseBlock] = []
+        for block in msg.content:
+            if isinstance(block, TextBlock):
+                content.append(AgentTextBlock(text=block.text))
+            elif isinstance(block, ToolUseBlock):
+                content.append(
+                    AgentToolUseBlock(
+                        id=block.id,
+                        name=block.name,
+                        input=block.input,  # type: ignore
+                    )
+                )
+
+        return AgentResponse(
+            content=content,
+            stop_reason=msg.stop_reason or "end_turn",  # type: ignore TODO: fix this
+        )
+
+
+class OpenAICompatibleClient(AgentClient):
+    """client for openapi compatible apis like openai, moonshot, etc"""
+
+    def __init__(self, api_key: str, model_name: str, endpoint: str) -> None:
+        self._api_key = api_key
+        self._model_name = model_name
+        self._endpoint = endpoint.rstrip("/")
+        self._http = httpx.AsyncClient(timeout=300.0)
+
+    async def complete(
+        self,
+        messages: list[dict[str, Any]],
+        system: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AgentResponse:
+        oai_messages = self._convert_messages(messages, system or build_system_prompt())
+
+        payload: dict[str, Any] = {
+            "model": self._model_name,
+            "messages": oai_messages,
+            "max_tokens": 16_000,
+        }
+
+        if tools:
+            payload["tools"] = self._convert_tools(tools)
+
+        resp = await self._http.post(
+            f"{self._endpoint}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+        if not resp.is_success:
+            logger.error(
+                "API error %d: %s", resp.status_code, resp.text[:1000]
+            )
+            resp.raise_for_status()
+        data = resp.json()
+
+        return self._parse_response(data)
+
+    def _convert_messages(
+        self, messages: list[dict[str, Any]], system: str
+    ) -> list[dict[str, Any]]:
+        """for anthropic chats, we'll convert the outputs into a similar format"""
+        result: list[dict[str, Any]] = [{"role": "system", "content": system}]
+
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+
+            if isinstance(content, str):
+                result.append({"role": role, "content": content})
+            elif isinstance(content, list):
+                if role == "assistant":
+                    text_parts = []
+                    tool_calls = []
+                    for block in content:
+                        if block.get("type") == "text":
+                            text_parts.append(block["text"])
+                        elif block.get("type") == "tool_use":
+                            tool_calls.append(
+                                {
+                                    "id": block["id"],
+                                    "type": "function",
+                                    "function": {
+                                        "name": block["name"],
+                                        "arguments": json.dumps(block["input"]),
+                                    },
+                                }
+                            )
+                    oai_msg: dict[str, Any] = {"role": "assistant"}
+                    if msg.get("reasoning_content"):
+                        oai_msg["reasoning_content"] = msg["reasoning_content"]
+                    # some openai-compatible apis reject content: null on
+                    # assistant messages with tool_calls, so omit it when empty
+                    if text_parts:
+                        oai_msg["content"] = "\n".join(text_parts)
+                    else:
+                        oai_msg["content"] = ""
+                    if tool_calls:
+                        oai_msg["tool_calls"] = tool_calls
+                    result.append(oai_msg)
+                elif role == "user":
+                    if content and content[0].get("type") == "tool_result":
+                        for block in content:
+                            result.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": block["tool_use_id"],
+                                    "content": block.get("content", ""),
+                                }
+                            )
+                    else:
+                        text = " ".join(b.get("text", str(b)) for b in content)
+                        result.append({"role": "user", "content": text})
+
+        return result
+
+    def _convert_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """convert anthropic tool defs to oai function calling format"""
+        result = []
+        for t in tools:
+            func: dict[str, Any] = {
+                "name": t["name"],
+                "description": t.get("description", ""),
+            }
+            if "input_schema" in t:
+                func["parameters"] = t["input_schema"]
+            result.append({"type": "function", "function": func})
+        return result
+
+    def _parse_response(self, data: dict[str, Any]) -> AgentResponse:
+        """convert an oai chat completion resp to agentresponse"""
+        choice = data["choices"][0]
+        message = choice["message"]
+        finish_reason = choice.get("finish_reason", "stop")
+
+        content: list[AgentTextBlock | AgentToolUseBlock] = []
+
+        if message.get("content"):
+            content.append(AgentTextBlock(text=message["content"]))
+
+        if message.get("tool_calls"):
+            for tc in message["tool_calls"]:
+                try:
+                    args = json.loads(tc["function"]["arguments"])
+                except (json.JSONDecodeError, KeyError):
+                    args = {}
+                content.append(
+                    AgentToolUseBlock(
+                        id=tc["id"],
+                        name=tc["function"]["name"],
+                        input=args,
+                    )
+                )
+
+        stop_reason = "tool_use" if finish_reason == "tool_calls" else "end_turn"
+        reasoning_content = message.get("reasoning_content")
+        return AgentResponse(content=content, stop_reason=stop_reason, reasoning_content=reasoning_content)
 
 
 MAX_TOOL_RESULT_LENGTH = 10_000
@@ -74,15 +252,30 @@ class Agent:
         model_api: Literal["anthropic", "openai", "openapi"],
         model_name: str,
         model_api_key: str | None,
+        model_endpoint: str | None = None,
         tool_executor: ToolExecutor | None = None,
     ) -> None:
-        if model_api != "anthropic":
-            # TODO: implement other APIs
-            raise NotImplementedError()
-
-        if model_api == "anthropic":
-            assert model_api_key
-            self._client = AnthropicClient(api_key=model_api_key, model_name=model_name)
+        match model_api:
+            case "anthropic":
+                assert model_api_key
+                self._client: AgentClient = AnthropicClient(
+                    api_key=model_api_key, model_name=model_name
+                )
+            case "openai":
+                assert model_api_key
+                self._client = OpenAICompatibleClient(
+                    api_key=model_api_key,
+                    model_name=model_name,
+                    endpoint="https://api.openai.com/v1",
+                )
+            case "openapi":
+                assert model_api_key
+                assert model_endpoint, "model_endpoint is required for openapi"
+                self._client = OpenAICompatibleClient(
+                    api_key=model_api_key,
+                    model_name=model_name,
+                    endpoint=model_endpoint,
+                )
 
         self._tool_executor = tool_executor
         self._conversation: list[dict[str, Any]] = []
@@ -94,11 +287,11 @@ class Agent:
             return None
         return [self._tool_executor.get_execute_code_tool_definition()]
 
-    async def _handle_tool_call(self, tool_use: ToolUseBlock) -> dict[str, Any]:
+    async def _handle_tool_call(self, tool_use: AgentToolUseBlock) -> dict[str, Any]:
         """handle a tool call from the model"""
         if tool_use.name == "execute_code" and self._tool_executor:
-            code = tool_use.input.get("code", "")  # type: ignore
-            result = await self._tool_executor.execute_code(code)  # type: ignore
+            code = tool_use.input.get("code", "")
+            result = await self._tool_executor.execute_code(code)
             return result
         else:
             return {"error": f"Unknown tool: {tool_use.name}"}
@@ -117,10 +310,10 @@ class Agent:
             text_response = ""
 
             for block in resp.content:
-                if isinstance(block, TextBlock):
+                if isinstance(block, AgentTextBlock):
                     assistant_content.append({"type": "text", "text": block.text})
                     text_response += block.text
-                elif isinstance(block, ToolUseBlock):
+                elif isinstance(block, AgentToolUseBlock):  # type: ignore TODO: for now this errors because there are no other types, but ignore for now
                     assistant_content.append(
                         {
                             "type": "tool_use",
@@ -130,20 +323,17 @@ class Agent:
                         }
                     )
 
-            self._conversation.append(
-                {"role": "assistant", "content": assistant_content}
-            )
+            assistant_msg: dict[str, Any] = {"role": "assistant", "content": assistant_content}
+            if resp.reasoning_content:
+                assistant_msg["reasoning_content"] = resp.reasoning_content
+            self._conversation.append(assistant_msg)
 
             # find any tool calls that we need to handle
             if resp.stop_reason == "tool_use":
                 tool_results: list[dict[str, Any]] = []
                 for block in resp.content:
-                    if isinstance(block, ToolUseBlock):
-                        code = (
-                            block.input.get("code", "")
-                            if isinstance(block.input, dict)  # type: ignore
-                            else ""
-                        )
+                    if isinstance(block, AgentToolUseBlock):
+                        code = block.input.get("code", "")
                         logger.info("Tool call: %s\n%s", block.name, code)
                         result = await self._handle_tool_call(block)
                         is_error = "error" in result
@@ -155,7 +345,10 @@ class Agent:
                         )
                         content_str = str(result)
                         if len(content_str) > MAX_TOOL_RESULT_LENGTH:
-                            content_str = content_str[:MAX_TOOL_RESULT_LENGTH] + "\n... (truncated)"
+                            content_str = (
+                                content_str[:MAX_TOOL_RESULT_LENGTH]
+                                + "\n... (truncated)"
+                            )
 
                         tool_results.append(
                             {
@@ -167,7 +360,7 @@ class Agent:
 
                 self._conversation.append({"role": "user", "content": tool_results})
             else:
-                # once there are no mroe tool calls, we proceed to the text response
+                # once there are no more tool calls, we proceed to the text response
                 return text_response
 
     async def run(self):
