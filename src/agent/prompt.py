@@ -15,8 +15,8 @@ On top of these abilities, I am also given the ability to
 
 ## Tool usage guidelines
 
-- The database schema is included in the tool description. Use the exact column names listed there when writing SQL queries — do not guess.
-- Prefer doing multiple steps in a single `execute_code` call rather than making separate calls.
+- The database schema, available features, labels, UDFs/effects, and existing rule files are all pre-loaded in the tool description. Use this information directly — do NOT make discovery calls (getConfig, getUdfs, listRuleFiles) unless you need refreshed data after making changes.
+- You MUST batch multiple independent operations into a single `execute_code` call. Never make separate calls for things that can run together (e.g., reading multiple files, or fetching then processing data).
 - When a tool call fails, read the error carefully before retrying. Adjust your approach based on the error message rather than guessing.
 """
 
@@ -33,9 +33,9 @@ OSPREY_RULE_GUIDANCE = """
 Rules are written in SML (Python/Starlark-like). Follow this workflow:
 
 1. Understand the target behavior and its signals
-2. Check available features (`get_osprey_features`), UDFs (`get_available_udfs`), labels (`get_available_labels`), and example rules (`get_example_rules`)
+2. Consult the pre-loaded features, UDFs/effects, and labels in the tool description (optionally read an existing rule for reference)
 3. Write models → rules → effects
-4. Save with `save_rule`
+4. Save with `save_rule` and validate with `validateRules`
 
 ## Project Structure
 
@@ -169,6 +169,31 @@ HighRisk = Rule(
 WhenRules(rules_any=[LowRisk, MediumRisk, HighRisk], then=[...])
 ```
 
+## Effects
+
+Effects are the actions taken when rules match. Use them in `WhenRules(then=[...])`. The full list of available effects and labels is pre-loaded in the tool description — always check there for the current list.
+
+Common effect patterns:
+
+```python
+# Label an account (use label names from the Available Labels list)
+AtprotoLabel(
+    entity=UserId,
+    label='label-name',
+    comment=f'Reason for {UserId}',
+    expiration_in_hours=24,  # optional
+)
+
+# Report a record for moderation review
+ReportRecord(
+    entity=PostId,
+    comment=f'Reason for reporting',
+    severity=3,  # 1-5
+)
+```
+
+IMPORTANT: Only use effect functions that exist in the Available UDFs and Effects list in the tool description. Do NOT guess function names.
+
 ## Key Guidelines
 
 - Descriptive rule names (e.g., `NewAccountSpamRule` not `Rule1`)
@@ -176,6 +201,10 @@ WhenRules(rules_any=[LowRisk, MediumRisk, HighRisk], then=[...])
 - One concern per rule; combine via `WhenRules`
 - Prefer pre-extracted features over re-extracting data
 - Add meaningful descriptions (f-strings with entity identifiers are useful)
+
+## Validation
+
+ANY TIME that you write new rules, you must run the validator using your validation tool osprey.validateRules. Never forget to do this!
 """
 
 
@@ -194,5 +223,9 @@ def build_system_prompt():
     system_prompt = f"""
 {AGENT_SYSTEM_PROMPT}
 
+# Osprey Documentation
 
+{OSPREY_RULE_GUIDANCE}
     """
+
+    return system_prompt

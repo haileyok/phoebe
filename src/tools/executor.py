@@ -19,9 +19,14 @@ class ToolExecutor:
         self._registry = registry
         self._ctx = ctx
         self._database_schema: str | None = None
+        self._osprey_features: str | None = None
+        self._osprey_labels: str | None = None
+        self._osprey_udfs: str | None = None
+        self._osprey_rule_files: str | None = None
+        self._tool_definition: dict[str, Any] | None = None
 
     async def initialize(self) -> None:
-        # go ahead and prefetch the database for inclusion in the prompt, so that the agent doesn't waste a tool call getting it on its own
+        # prefetch data for inclusion in the tool description, so that the agent doesn't waste tool calls on discovery
         try:
             schema = await self._registry.execute(self._ctx, "clickhouse.getSchema", {})
             lines = [f"  {col['name']} ({col['type']})" for col in schema]
@@ -29,6 +34,47 @@ class ToolExecutor:
             logger.info("Prefetched database schema (%d columns)", len(schema))
         except Exception:
             logger.warning("Failed to prefetch database schema", exc_info=True)
+
+        try:
+            config = await self._registry.execute(self._ctx, "osprey.getConfig", {})
+            feature_lines = [f"  {name}: {ftype}" for name, ftype in config["features"].items()]
+            self._osprey_features = "\n".join(feature_lines)
+
+            label_lines = [
+                f"  {l['name']}: {l['description']} (valid for: {l['valid_for']})"
+                for l in config["labels"]
+            ]
+            self._osprey_labels = "\n".join(label_lines)
+
+            logger.info(
+                "Prefetched osprey config (%d features, %d labels)",
+                len(config["features"]),
+                len(config["labels"]),
+            )
+        except Exception:
+            logger.warning("Failed to prefetch osprey config", exc_info=True)
+
+        try:
+            udfs = await self._registry.execute(self._ctx, "osprey.getUdfs", {})
+            udf_lines: list[str] = []
+            for cat in udfs["categories"]:
+                udf_lines.append(f"## {cat['name']}")
+                for udf in cat["udfs"]:
+                    udf_lines.append(f"  {udf['signature']}")
+                    if udf.get("doc"):
+                        first_line = udf["doc"].strip().split("\n")[0]
+                        udf_lines.append(f"    {first_line}")
+            self._osprey_udfs = "\n".join(udf_lines)
+            logger.info("Prefetched osprey UDFs")
+        except Exception:
+            logger.warning("Failed to prefetch osprey UDFs", exc_info=True)
+
+        try:
+            result = await self._registry.execute(self._ctx, "osprey.listRuleFiles", {})
+            self._osprey_rule_files = "\n".join(f"  {f}" for f in result["files"])
+            logger.info("Prefetched osprey rule files (%d files)", len(result["files"]))
+        except Exception:
+            logger.warning("Failed to prefetch osprey rule files", exc_info=True)
 
     async def execute_code(self, code: str) -> dict[str, Any]:
         """
@@ -176,6 +222,9 @@ export {{ tools }};
     def get_execute_code_tool_definition(self) -> dict[str, Any]:
         """get the anthropic tool definition for execute_code, including all the docs for available backend tools"""
 
+        if self._tool_definition is not None:
+            return self._tool_definition
+
         tool_docs = self._registry.generate_tool_documentation()
 
         schema_section = ""
@@ -190,6 +239,37 @@ The `default.osprey_execution_results` table has these columns:
 Use these exact column names when writing SQL queries. Do NOT guess column names.
 """
 
+        osprey_section = ""
+        if self._osprey_features:
+            osprey_section += f"""
+
+# Available Osprey Features
+
+These features are available in rule conditions (pre-loaded — no need to call getConfig):
+{self._osprey_features}
+"""
+        if self._osprey_labels:
+            osprey_section += f"""
+# Available Labels
+
+Use these label names with AtprotoLabel effects:
+{self._osprey_labels}
+"""
+        if self._osprey_udfs:
+            osprey_section += f"""
+# Available UDFs and Effects
+
+These are the available functions for use in rules (pre-loaded — no need to call getUdfs):
+{self._osprey_udfs}
+"""
+        if self._osprey_rule_files:
+            osprey_section += f"""
+# Existing Rule Files
+
+These .sml files already exist in the ruleset (pre-loaded — no need to call listRuleFiles unless you need a fresh list after mutations):
+{self._osprey_rule_files}
+"""
+
         description = f"""Execute Typescript code in a sandboxed Deno runtime.
 
 The code has access to backend tools via the `tools` namespace. Use `output()` to return results.
@@ -200,9 +280,9 @@ const result = await tools.clickhouse.query("SELECT count() FROM events");
 output(result);
 ```
 
-{tool_docs}{schema_section}"""
+{tool_docs}{schema_section}{osprey_section}"""
 
-        return {
+        self._tool_definition = {
             "name": "execute_code",
             "description": description,
             "input_schema": {
@@ -216,3 +296,4 @@ output(result);
                 "required": ["code"],
             },
         }
+        return self._tool_definition

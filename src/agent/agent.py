@@ -7,7 +7,7 @@ import anthropic
 from anthropic.types import TextBlock, ToolUseBlock
 from pydantic import BaseModel
 
-from src.agent.prompt import AGENT_SYSTEM_PROMPT
+from src.agent.prompt import build_system_prompt
 from src.tools.executor import ToolExecutor
 
 logger = logging.getLogger(__name__)
@@ -42,18 +42,30 @@ class AnthropicClient(AgentClient):
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> anthropic.types.Message:
+        system_text = system or build_system_prompt()
         kwargs: dict[str, Any] = {
             "model": self._model_name,
-            "max_tokens": 25_000,
-            "system": system or AGENT_SYSTEM_PROMPT,
+            "max_tokens": 16_000,
+            "system": [
+                {
+                    "type": "text",
+                    "text": system_text,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             "messages": messages,
         }
 
         if tools:
+            tools = [dict(t) for t in tools]  # shallow copy
+            tools[-1]["cache_control"] = {"type": "ephemeral"}
             kwargs["tools"] = tools
 
         async with self._client.messages.stream(**kwargs) as stream:  # type: ignore
             return await stream.get_final_message()
+
+
+MAX_TOOL_RESULT_LENGTH = 10_000
 
 
 class Agent:
@@ -141,11 +153,15 @@ class Agent:
                             "error" if is_error else "ok",
                             summary,
                         )
+                        content_str = str(result)
+                        if len(content_str) > MAX_TOOL_RESULT_LENGTH:
+                            content_str = content_str[:MAX_TOOL_RESULT_LENGTH] + "\n... (truncated)"
+
                         tool_results.append(
                             {
                                 "type": "tool_result",
                                 "tool_use_id": block.id,
-                                "content": str(result),
+                                "content": content_str,
                             }
                         )
 

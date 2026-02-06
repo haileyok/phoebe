@@ -102,6 +102,13 @@ class ToolRegistry:
         tool = self.get(name)
         if tool is None:
             raise ValueError(f"Unknown tool: {name}")
+
+        if len(params) == 1:
+            param_names = {p.name for p in tool.parameters}
+            val = next(iter(params.values()))
+            if isinstance(val, dict) and set(val.keys()) <= param_names:
+                params = val
+
         return await tool.handler(ctx, **params)
 
     def generate_tool_documentation(self) -> str:
