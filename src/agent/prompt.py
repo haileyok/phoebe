@@ -194,6 +194,8 @@ ReportRecord(
 
 IMPORTANT: Only use effect functions that exist in the Available UDFs and Effects list in the tool description. Do NOT guess function names.
 
+IMPORTANT: When using counters to apply a label, always use == with a threshold. Using >= will cause bulk label application that cause ratelimit problems.
+
 ## Key Guidelines
 
 - Descriptive rule names (e.g., `NewAccountSpamRule` not `Rule1`)

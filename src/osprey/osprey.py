@@ -191,7 +191,9 @@ class Osprey:
             if index_path.exists():
                 rule_path = str(target.relative_to(OSPREY_RULESET_PATH.resolve()))
                 if require_if:
-                    require_line = f"Require(rule='{rule_path}', require_if={require_if})\n"
+                    require_line = (
+                        f"Require(rule='{rule_path}', require_if={require_if})\n"
+                    )
                 else:
                     require_line = f"Require(rule='{rule_path}')\n"
 
