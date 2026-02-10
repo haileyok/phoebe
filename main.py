@@ -3,16 +3,19 @@ from collections.abc import Callable
 from typing import Literal
 
 import click
-import httpx
 from aiokafka.client import asyncio
 
 from src.agent.agent import Agent
+from src.arena.context import ArenaContext
+from src.arena.scorer import Scorer, ScoringConfig
+from src.arena.server import ArenaServer
 from src.clickhouse.clickhouse import Clickhouse
 from src.config import CONFIG
-from src.osprey.osprey import Osprey
-from src.ozone.ozone import Ozone
+from src.safety.classifier import SafetyClassifier
 from src.tools.executor import ToolExecutor
 from src.tools.registry import TOOL_REGISTRY, ToolContext
+from src.x402.client import X402Client
+from src.x402.wallet import Wallet
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,19 +29,27 @@ httpx_logger = logging.getLogger("httpx")
 httpx_logger.setLevel(logging.WARNING)
 
 
+# ---------------------------------------------------------------------------
+# CLI option groups
+# ---------------------------------------------------------------------------
+
 SHARED_OPTIONS: list[Callable[..., Callable[..., object]]] = [
     click.option("--clickhouse-host"),
     click.option("--clickhouse-port"),
     click.option("--clickhouse-user"),
     click.option("--clickhouse-password"),
     click.option("--clickhouse-database"),
-    click.option("--osprey-base-url"),
-    click.option("--osprey-repo-url"),
-    click.option("--osprey-ruleset-url"),
     click.option("--model-api"),
     click.option("--model-name"),
     click.option("--model-api-key"),
     click.option("--model-endpoint"),
+]
+
+ARENA_OPTIONS: list[Callable[..., Callable[..., object]]] = [
+    click.option("--arena-host"),
+    click.option("--arena-port", type=int),
+    click.option("--x402-wallet-key"),
+    click.option("--x402-wallet-address"),
 ]
 
 
@@ -48,23 +59,25 @@ def shared_options[F: Callable[..., object]](func: F) -> F:
     return func
 
 
-def build_services(
+def arena_options[F: Callable[..., object]](func: F) -> F:
+    for option in reversed(ARENA_OPTIONS):
+        func = option(func)  # type: ignore[assignment]
+    return func
+
+
+# ---------------------------------------------------------------------------
+# Service builders
+# ---------------------------------------------------------------------------
+
+
+def build_clickhouse(
     clickhouse_host: str | None,
     clickhouse_port: int | None,
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    osprey_base_url: str | None,
-    osprey_repo_url: str | None,
-    osprey_ruleset_url: str | None,
-    model_api: Literal["anthropic", "openai", "openapi"] | None,
-    model_name: str | None,
-    model_api_key: str | None,
-    model_endpoint: str | None,
-) -> tuple[Clickhouse, Osprey, ToolExecutor, Agent]:
-    http_client = httpx.AsyncClient()
-
-    clickhouse = Clickhouse(
+) -> Clickhouse:
+    return Clickhouse(
         host=clickhouse_host or CONFIG.clickhouse_host,
         port=clickhouse_port or CONFIG.clickhouse_port,
         user=clickhouse_user or CONFIG.clickhouse_user,
@@ -72,19 +85,47 @@ def build_services(
         database=clickhouse_database or CONFIG.clickhouse_database,
     )
 
-    osprey = Osprey(
-        http_client=http_client,
-        base_url=osprey_base_url or CONFIG.osprey_base_url,
-        osprey_repo_url=osprey_repo_url or CONFIG.osprey_repo_url,
-        osprey_ruleset_url=osprey_ruleset_url or CONFIG.osprey_ruleset_url,
+
+def build_x402(
+    wallet_key: str | None = None,
+    wallet_address: str | None = None,
+) -> X402Client:
+    wallet = Wallet(
+        private_key=wallet_key or CONFIG.x402_wallet_private_key or "dev-key",
+        address=wallet_address or CONFIG.x402_wallet_address or "0xdev",
+        chain=CONFIG.x402_chain,
+    )
+    return X402Client(
+        wallet=wallet,
+        facilitator_url=CONFIG.x402_facilitator_url,
+        max_auto_pay=CONFIG.x402_max_auto_pay,
     )
 
-    ozone = Ozone()
+
+def build_safety_classifier() -> SafetyClassifier:
+    return SafetyClassifier(
+        api_key=CONFIG.model_api_key,
+        model_name=CONFIG.safety_classifier_model,
+        endpoint=CONFIG.safety_classifier_endpoint,
+    )
+
+
+def build_arena_services(
+    clickhouse: Clickhouse,
+    x402_client: X402Client,
+    safety_classifier: SafetyClassifier,
+    model_api: str | None,
+    model_name: str | None,
+    model_api_key: str | None,
+    model_endpoint: str | None,
+) -> tuple[ArenaContext, ToolExecutor, Agent, Scorer]:
+    arena_ctx = ArenaContext()
 
     tool_context = ToolContext(
         clickhouse=clickhouse,
-        osprey=osprey,
-        ozone=ozone,
+        x402_client=x402_client,
+        safety_classifier=safety_classifier,
+        arena=arena_ctx,
     )
 
     executor = ToolExecutor(
@@ -100,7 +141,26 @@ def build_services(
         tool_executor=executor,
     )
 
-    return clickhouse, osprey, executor, agent
+    scoring_config = ScoringConfig(
+        alpha=CONFIG.arena_scoring_alpha,
+        beta=CONFIG.arena_scoring_beta,
+        gamma=CONFIG.arena_scoring_gamma,
+        delta=CONFIG.arena_scoring_delta,
+        payout_rate=CONFIG.arena_payout_rate,
+    )
+
+    scorer = Scorer(
+        x402_client=x402_client,
+        safety_classifier=safety_classifier,
+        config=scoring_config,
+    )
+
+    return arena_ctx, executor, agent, scorer
+
+
+# ---------------------------------------------------------------------------
+# CLI commands
+# ---------------------------------------------------------------------------
 
 
 @click.group()
@@ -108,75 +168,105 @@ def cli():
     pass
 
 
-@cli.command()
+@cli.command(name="arena")
 @shared_options
-def main(
+@arena_options
+def arena_cmd(
     clickhouse_host: str | None,
     clickhouse_port: int | None,
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    osprey_base_url: str | None,
-    osprey_repo_url: str | None,
-    osprey_ruleset_url: str | None,
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
+    arena_host: str | None,
+    arena_port: int | None,
+    x402_wallet_key: str | None,
+    x402_wallet_address: str | None,
 ):
-    clickhouse, osprey, executor, agent = build_services(
-        clickhouse_host=clickhouse_host,
-        clickhouse_port=clickhouse_port,
-        clickhouse_user=clickhouse_user,
-        clickhouse_password=clickhouse_password,
-        clickhouse_database=clickhouse_database,
-        osprey_base_url=osprey_base_url,
-        osprey_repo_url=osprey_repo_url or CONFIG.osprey_repo_url,
-        osprey_ruleset_url=osprey_ruleset_url or CONFIG.osprey_ruleset_url,
+    """Start the Sandbox Arena HTTP server (red teaming marketplace)."""
+    clickhouse = build_clickhouse(
+        clickhouse_host, clickhouse_port, clickhouse_user,
+        clickhouse_password, clickhouse_database,
+    )
+    x402_client = build_x402(x402_wallet_key, x402_wallet_address)
+    classifier = build_safety_classifier()
+
+    arena_ctx, executor, agent, scorer = build_arena_services(
+        clickhouse=clickhouse,
+        x402_client=x402_client,
+        safety_classifier=classifier,
         model_api=model_api,
         model_name=model_name,
         model_api_key=model_api_key,
         model_endpoint=model_endpoint,
     )
 
+    server = ArenaServer(
+        scorer=scorer,
+        submission_fee_usdc=CONFIG.arena_submission_fee,
+    )
+
+    # share state references between server and tool context
+    arena_ctx.bounties = server._bounties
+    arena_ctx.submissions = server._submissions
+    arena_ctx.evaluations = server._evaluations
+
+    host = arena_host or CONFIG.arena_host
+    port = arena_port or CONFIG.arena_port
+
     async def run():
         await clickhouse.initialize()
         await executor.initialize()
-        await osprey.initialize()
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(agent.run())
+
+        import uvicorn
+
+        app = server.build_app()
+        config = uvicorn.Config(app, host=host, port=port, log_level="info")
+        srv = uvicorn.Server(config)
+
+        logger.info("Sandbox Arena starting on %s:%d", host, port)
+        logger.info("x402 wallet: %s (chain: %s)", x402_client.wallet_address, CONFIG.x402_chain)
+        await srv.serve()
 
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
-        logger.info("received keyboard interrupt")
+        logger.info("Arena shutting down.")
 
 
 @cli.command(name="chat")
 @shared_options
+@arena_options
 def chat(
     clickhouse_host: str | None,
     clickhouse_port: int | None,
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    osprey_base_url: str | None,
-    osprey_repo_url: str | None,
-    osprey_ruleset_url: str | None,
     model_api: Literal["anthropic", "openai", "openapi"] | None,
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
+    arena_host: str | None,
+    arena_port: int | None,
+    x402_wallet_key: str | None,
+    x402_wallet_address: str | None,
 ):
-    clickhouse, osprey, executor, agent = build_services(
-        clickhouse_host=clickhouse_host,
-        clickhouse_port=clickhouse_port,
-        clickhouse_user=clickhouse_user,
-        clickhouse_password=clickhouse_password,
-        clickhouse_database=clickhouse_database,
-        osprey_base_url=osprey_base_url,
-        osprey_repo_url=osprey_repo_url or CONFIG.osprey_repo_url,
-        osprey_ruleset_url=osprey_ruleset_url or CONFIG.osprey_ruleset_url,
+    """Interactive chat mode with Phoebe (arena judge)."""
+    clickhouse = build_clickhouse(
+        clickhouse_host, clickhouse_port, clickhouse_user,
+        clickhouse_password, clickhouse_database,
+    )
+    x402_client = build_x402(x402_wallet_key, x402_wallet_address)
+    classifier = build_safety_classifier()
+
+    arena_ctx, executor, agent, scorer = build_arena_services(
+        clickhouse=clickhouse,
+        x402_client=x402_client,
+        safety_classifier=classifier,
         model_api=model_api,
         model_name=model_name,
         model_api_key=model_api_key,
@@ -186,9 +276,8 @@ def chat(
     async def run():
         await clickhouse.initialize()
         await executor.initialize()
-        await osprey.initialize()
         logger.info("Services initialized. Starting interactive chat.")
-        print("\nAgent ready. Type your message (Ctrl+C to exit).\n")
+        print("\nPhoebe (Arena Judge) ready. Type your message (Ctrl+C to exit).\n")
 
         while True:
             try:
@@ -201,7 +290,7 @@ def chat(
 
             logger.info("User: %s", user_input)
             response = await agent.chat(user_input)
-            print(f"\nAgent: {response}\n")
+            print(f"\nPhoebe: {response}\n")
 
     try:
         asyncio.run(run())

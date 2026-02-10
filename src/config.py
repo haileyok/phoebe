@@ -1,4 +1,5 @@
 from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,16 +16,7 @@ class Config(BaseSettings):
     clickhouse_database: str = "default"
     """default database for the clickhouse server"""
 
-    # kafka config (currently unused but maybe later...)
-    bootstrap_server: str = "localhost:9092"
-    """bootstrap server for atkafka events"""
-    input_topic: str = "atproto-events"
-    """input topic for atkafka events"""
-    group_id: str = "osprey-agent"
-    """group id for atkafka events"""
-
-    # model config. currently only supporting anthropic, but we can add the other models later.
-    # really want to see performance on kimi2.5...
+    # model config — used for Phoebe's own LLM reasoning + safety classifier
     model_api: Literal["anthropic", "openai", "openapi"] = "anthropic"
     """the model api to use. must be one of `anthropic`, `openai`, or `openapi`"""
     model_name: str = "claude-sonnet-4-5-20250929"
@@ -34,25 +26,41 @@ class Config(BaseSettings):
     model_endpoint: str = ""
     """for openapi model apis, the endpoint to use"""
 
-    # ozone config
-    ozone_moderator_pds_host: str = ""
-    """the PDS host for the moderator account that has at least moderator-level permissions in Ozone"""
-    ozone_moderator_identifier: str = ""
-    """the moderator account's identifier (handle)"""
-    ozone_moderator_password: str = ""
-    """the moderator account's password"""
-    ozone_labeler_account_did: str = ""
-    """the DID of the labeler account. this variable is not the same as the moderator account, though for purely-agentified ozone instances, they may be the same. not recommended, since that means you're giving the agent _admin_ permissions..."""
-    ozone_allowed_labels: str = ""
-    """comma separated list of labels that Phoebe is allowed to apply. both specified to the agent via prompting and validated before applying labels directly"""
+    # x402 payment config
+    x402_wallet_private_key: str = ""
+    """private key for signing x402 USDC payments (EVM or Solana)"""
+    x402_wallet_address: str = ""
+    """wallet address for x402 payments"""
+    x402_chain: str = "base"
+    """blockchain to use for x402 payments (base, solana, etc.)"""
+    x402_facilitator_url: str = ""
+    """x402 facilitator URL for payment settlement"""
+    x402_max_auto_pay: float = 1.0
+    """maximum USDC amount to auto-pay per x402 request"""
 
-    # osprey config
-    osprey_base_url: str = ""
-    """the base url for your osprey instance"""
-    osprey_repo_url: str = "https://github.com/roostorg/osprey"
-    """the url to fetch the osprey codebase from. used for letting the agent validate written rules directly"""
-    osprey_ruleset_url: str = "https://github.com/haileyok/atproto-ruleset"
-    """the url to fetch the osprey ruleset you are running. used when validating written rules (i.e. for having the needed features available for validation)"""
+    # arena config
+    arena_host: str = "0.0.0.0"
+    """host for the arena HTTP server"""
+    arena_port: int = 8080
+    """port for the arena HTTP server"""
+    arena_submission_fee: float = 0.01
+    """USDC fee per attack submission (anti-spam)"""
+    arena_scoring_alpha: float = 0.4
+    """scoring weight for attack success"""
+    arena_scoring_beta: float = 0.3
+    """scoring weight for novelty"""
+    arena_scoring_gamma: float = 0.2
+    """scoring weight for category coverage"""
+    arena_scoring_delta: float = 0.1
+    """scoring weight for duplicate penalty"""
+    arena_payout_rate: float = 1.0
+    """score-to-USDC multiplier for payouts"""
+
+    # safety classifier config
+    safety_classifier_model: str = "claude-sonnet-4-5-20250929"
+    """model to use for the LLM-as-judge safety classifier"""
+    safety_classifier_endpoint: str = "https://api.anthropic.com"
+    """API endpoint for the safety classifier"""
 
     model_config = SettingsConfigDict(env_file=".env")
 

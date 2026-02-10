@@ -1,21 +1,17 @@
 [project]
-name = "osprey-agent"
+name = "sandbox-arena"
 version = "0.1.0"
-description = "Add your description here"
+description = "Sandbox Arena: AI Safety Red Teaming Marketplace with x402 Payments"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.77.1",
-    "atkafka-consumer-python",
-    "atproto>=0.0.65",
     "click>=8.3.1",
     "clickhouse-connect>=0.10.0",
-    "dnspython>=2.8.0",
     "httpx>=0.28.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",
-    "python-whois>=0.9.4",
+    "starlette>=0.45.0",
+    "uvicorn>=0.34.0",
+    "aiokafka>=0.12.0",
 ]
-
-[tool.uv.sources]
-atkafka-consumer-python = { git = "https://tangled.org/hailey.at/atkafka-consumer-python" }
