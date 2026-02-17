@@ -8,6 +8,7 @@ dependencies = [
     "anthropic>=0.77.1",
     "click>=8.3.1",
     "clickhouse-connect>=0.10.0",
+    "eth-account>=0.13.0",
     "httpx>=0.28.0",
     "pydantic>=2.12.5",
     "pydantic-settings>=2.12.0",

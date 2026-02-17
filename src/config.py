@@ -55,6 +55,14 @@ class Config(BaseSettings):
     """scoring weight for duplicate penalty"""
     arena_payout_rate: float = 1.0
     """score-to-USDC multiplier for payouts"""
+    arena_wallet: str = "arena.sandbox.eth"
+    """arena's wallet address for receiving bounty funds and submission fees"""
+    arena_dev_mode: bool = True
+    """run arena in dev mode (accept DevWallet HMAC signatures, skip real EVM verification)"""
+
+    # spending limits
+    x402_spending_limit: float = 100.0
+    """cumulative USDC spending limit for x402 client"""
 
     # safety classifier config
     safety_classifier_model: str = "claude-sonnet-4-5-20250929"

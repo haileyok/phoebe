@@ -1,23 +1,31 @@
 """
-Arena context — holds references to bounties, submissions, and evaluations.
+Arena context — provides access to the persistent store from tool handlers.
 
-Passed into ToolContext so that tools in the Deno sandbox can access
-arena state.
+Passed into ToolContext so that Deno sandbox tools can query arena state.
 """
 
-from src.arena.models import Bounty, EvaluationResult, Submission
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.arena.models import Bounty
+    from src.arena.store import ArenaStore
 
 
 class ArenaContext:
     """
     Shared arena state accessible from tool handlers.
 
-    In a production deployment this would be backed by ClickHouse. For the
-    prototype it uses the in-memory dicts from ArenaServer (passed by ref).
+    Backed by the ArenaStore (ClickHouse) in production.
     """
 
-    def __init__(self) -> None:
-        self.bounties: dict[str, Bounty] = {}
-        self.submissions: dict[str, Submission] = {}
-        self.evaluations: dict[str, EvaluationResult] = {}
+    def __init__(self, store: ArenaStore | None = None) -> None:
+        self._store = store
         self.active_bounty: Bounty | None = None
+
+    @property
+    def store(self) -> ArenaStore:
+        if self._store is None:
+            raise RuntimeError("ArenaStore not configured")
+        return self._store

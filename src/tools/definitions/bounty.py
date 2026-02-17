@@ -1,6 +1,7 @@
 """
 Bounty management tools — query and manage arena bounties.
 
+Uses the ClickHouse-backed ArenaStore for persistent state.
 Available in the Deno sandbox so Phoebe's agent can inspect bounties
 during evaluation, and for interactive chat mode.
 """
@@ -17,8 +18,9 @@ from src.tools.registry import TOOL_REGISTRY, ToolContext, ToolParameter
     parameters=[],
 )
 async def bounty_list(ctx: ToolContext) -> dict[str, Any]:
-    """List active bounties."""
-    arena = ctx.arena
+    """List active bounties from ClickHouse."""
+    store = ctx.arena.store
+    active = await store.list_active_bounties()
     bounties = [
         {
             "bounty_id": b.bounty_id,
@@ -28,8 +30,7 @@ async def bounty_list(ctx: ToolContext) -> dict[str, Any]:
             "categories": b.categories,
             "max_per_finding": b.max_payout_per_finding,
         }
-        for b in arena.bounties.values()
-        if b.status.value == "active"
+        for b in active
     ]
     return {"bounties": bounties, "count": len(bounties)}
 
@@ -46,9 +47,9 @@ async def bounty_list(ctx: ToolContext) -> dict[str, Any]:
     ],
 )
 async def bounty_get(ctx: ToolContext, bounty_id: str) -> dict[str, Any]:
-    """Get bounty details."""
-    arena = ctx.arena
-    bounty = arena.bounties.get(bounty_id)
+    """Get bounty details from ClickHouse."""
+    store = ctx.arena.store
+    bounty = await store.get_bounty(bounty_id)
     if not bounty:
         return {"error": f"Bounty {bounty_id} not found"}
     return bounty.model_dump()
@@ -60,14 +61,9 @@ async def bounty_get(ctx: ToolContext, bounty_id: str) -> dict[str, Any]:
     parameters=[],
 )
 async def bounty_taxonomy(ctx: ToolContext) -> dict[str, Any]:
-    """Return taxonomy categories and coverage."""
-    arena = ctx.arena
-
-    # aggregate coverage from evaluations
-    coverage: dict[str, int] = {}
-    for ev in arena.evaluations.values():
-        for cat, count in ev.category_coverage.items():
-            coverage[cat] = coverage.get(cat, 0) + count
+    """Return taxonomy categories and coverage from ClickHouse."""
+    store = ctx.arena.store
+    coverage = await store.get_category_coverage()
 
     categories = []
     for cat in SafetyCategory:
