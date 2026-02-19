@@ -1,0 +1,8 @@
+.env
+.git
+.gitignore
+__pycache__
+*.py[oc]
+*.egg-info
+.venv
+data/
