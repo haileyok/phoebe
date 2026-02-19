@@ -131,6 +131,7 @@ def build_arena_services(
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
+    prompt_mode: str = "judge",
 ) -> tuple[ArenaContext, ToolExecutor, Agent, Scorer]:
     arena_ctx = ArenaContext(store=store)
 
@@ -152,6 +153,7 @@ def build_arena_services(
         model_api_key=model_api_key or CONFIG.model_api_key,
         model_endpoint=model_endpoint or CONFIG.model_endpoint or None,
         tool_executor=executor,
+        prompt_mode=prompt_mode,
     )
 
     scoring_config = ScoringConfig(
@@ -322,6 +324,74 @@ def chat(
         asyncio.run(run())
     except KeyboardInterrupt:
         print("\nExiting.")
+
+
+@cli.command(name="admin")
+@shared_options
+@arena_options
+def admin_cmd(
+    clickhouse_host: str | None,
+    clickhouse_port: int | None,
+    clickhouse_user: str | None,
+    clickhouse_password: str | None,
+    clickhouse_database: str | None,
+    model_api: Literal["anthropic", "openai", "openapi"] | None,
+    model_name: str | None,
+    model_api_key: str | None,
+    model_endpoint: str | None,
+    arena_host: str | None,
+    arena_port: int | None,
+    x402_wallet_key: str | None,
+    x402_wallet_address: str | None,
+    dev_mode: bool | None,
+):
+    """Admin console — manage bounties, review submissions, monitor arena health."""
+    clickhouse = build_clickhouse(
+        clickhouse_host, clickhouse_port, clickhouse_user,
+        clickhouse_password, clickhouse_database,
+    )
+    x402_client = build_x402(x402_wallet_key, x402_wallet_address, dev_mode)
+    classifier = build_safety_classifier()
+
+    store = ArenaStore(clickhouse)
+
+    arena_ctx, executor, agent, scorer = build_arena_services(
+        clickhouse=clickhouse,
+        x402_client=x402_client,
+        safety_classifier=classifier,
+        store=store,
+        model_api=model_api,
+        model_name=model_name,
+        model_api_key=model_api_key,
+        model_endpoint=model_endpoint,
+        prompt_mode="admin",
+    )
+
+    async def run():
+        await clickhouse.initialize()
+        await store.initialize()
+        await executor.initialize()
+        logger.info("Admin console initialized.")
+        print("\nPhoebe Admin Console ready. Type your command (Ctrl+C to exit).")
+        print("Examples: 'show arena stats', 'create a bounty', 'list submissions'\n")
+
+        while True:
+            try:
+                user_input = input("Admin> ")
+            except EOFError:
+                break
+
+            if not user_input.strip():
+                continue
+
+            logger.info("Admin: %s", user_input)
+            response = await agent.chat(user_input)
+            print(f"\nPhoebe: {response}\n")
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\nExiting admin console.")
 
 
 if __name__ == "__main__":
