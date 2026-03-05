@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict
 if TYPE_CHECKING:
     from src.arena.context import ArenaContext
     from src.clickhouse.clickhouse import Clickhouse
+    from src.osprey.osprey import Osprey
     from src.safety.classifier import SafetyClassifier
     from src.x402.client import X402Client
 
@@ -47,11 +48,13 @@ class ToolContext:
         x402_client: X402Client | None = None,
         safety_classifier: SafetyClassifier | None = None,
         arena: ArenaContext | None = None,
+        osprey: Osprey | None = None,
     ) -> None:
         self._clickhouse = clickhouse
         self._x402_client = x402_client
         self._safety_classifier = safety_classifier
         self._arena = arena
+        self._osprey = osprey
 
     @property
     def clickhouse(self) -> Clickhouse:
@@ -76,6 +79,12 @@ class ToolContext:
         if self._arena is None:
             raise RuntimeError("Arena context not configured")
         return self._arena
+
+    @property
+    def osprey(self) -> Osprey:
+        if self._osprey is None:
+            raise RuntimeError("Osprey client not configured")
+        return self._osprey
 
 
 class ToolRegistry:
