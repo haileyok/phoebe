@@ -35,6 +35,7 @@ from src.arena.models import (
 from src.arena.scorer import Scorer
 from src.arena.store import ArenaStore
 from src.arena.taxonomy import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS, SafetyCategory
+from src.ui.dashboard import TNS_DDL, TNSDashboard
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class ArenaServer:
         arena_wallet: str = "arena.sandbox.eth",
         facilitator_url: str = "",
         dev_mode: bool = False,
+        safety_classifier: Any | None = None,
     ) -> None:
         self._scorer = scorer
         self._store = store
@@ -85,6 +87,7 @@ class ArenaServer:
         self._facilitator_url = facilitator_url
         self._dev_mode = dev_mode
         self._rate_limiter = RateLimiter()
+        self._safety_classifier = safety_classifier
 
     def build_app(self) -> Starlette:
         routes = [
@@ -97,6 +100,14 @@ class ArenaServer:
             Route("/api/taxonomy", self._get_taxonomy, methods=["GET"]),
             Route("/api/health", self._health, methods=["GET"]),
         ]
+
+        # Mount T&S analyst dashboard if safety classifier is available
+        if self._safety_classifier:
+            dashboard = TNSDashboard(
+                safety_classifier=self._safety_classifier,
+                store=self._store,
+            )
+            routes.extend(dashboard.routes())
 
         middleware = [
             Middleware(

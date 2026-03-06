@@ -15,6 +15,7 @@ from src.config import CONFIG
 from src.safety.classifier import SafetyClassifier
 from src.tools.executor import ToolExecutor
 from src.tools.registry import TOOL_REGISTRY, ToolContext
+from src.ui.dashboard import TNS_DDL
 from src.x402.client import X402Client
 from src.x402.wallet import DevWallet, Wallet
 
@@ -233,6 +234,7 @@ def arena_cmd(
         arena_wallet=CONFIG.arena_wallet,
         facilitator_url=CONFIG.x402_facilitator_url,
         dev_mode=is_dev,
+        safety_classifier=classifier,
     )
 
     host = arena_host or CONFIG.arena_host
@@ -243,6 +245,14 @@ def arena_cmd(
         await store.initialize()
         await executor.initialize()
 
+        # Initialize T&S breach log table
+        for ddl in TNS_DDL:
+            try:
+                await clickhouse.query(ddl.strip())
+            except Exception:
+                pass
+        logger.info("T&S breach log table initialized")
+
         import uvicorn
 
         app = server.build_app()
@@ -250,6 +260,7 @@ def arena_cmd(
         srv = uvicorn.Server(config)
 
         logger.info("Sandbox Arena starting on %s:%d", host, port)
+        logger.info("T&S Dashboard available at http://%s:%d/tns", host, port)
         logger.info("x402 wallet: %s (chain: %s)", x402_client.wallet_address, CONFIG.x402_chain)
         logger.info("Dev mode: %s", is_dev)
         await srv.serve()
