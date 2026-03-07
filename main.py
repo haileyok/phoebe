@@ -116,38 +116,10 @@ def build_x402(
 
 
 def build_safety_classifier() -> SafetyClassifier:
-    base = SafetyClassifier(
+    return SafetyClassifier(
         api_key=CONFIG.model_api_key,
         model_name=CONFIG.safety_classifier_model,
         endpoint=CONFIG.safety_classifier_endpoint,
-    )
-
-    if not CONFIG.tee_enabled or not CONFIG.tee_endpoint:
-        return base
-
-    # Build optional ERC-8004 publisher
-    erc8004_publisher = None
-    if CONFIG.erc8004_enabled and CONFIG.erc8004_contract:
-        from src.safety.erc8004 import ERC8004Publisher
-
-        erc8004_publisher = ERC8004Publisher(
-            contract_address=CONFIG.erc8004_contract,
-            chain=CONFIG.erc8004_chain,
-            rpc_url=CONFIG.erc8004_rpc_url,
-            relayer_url=CONFIG.erc8004_relayer_url,
-            publisher_address=CONFIG.erc8004_publisher_address,
-            private_key=CONFIG.x402_wallet_private_key,
-        )
-
-    from src.safety.tee_classifier import TEEClassifier
-
-    logger.info("TEE classifier enabled — endpoint: %s", CONFIG.tee_endpoint)
-    return TEEClassifier(
-        inner=base,
-        tee_endpoint=CONFIG.tee_endpoint,
-        verify_attestation=CONFIG.tee_verify_attestation,
-        fallback_on_failure=CONFIG.tee_fallback_on_failure,
-        erc8004_publisher=erc8004_publisher,
     )
 
 

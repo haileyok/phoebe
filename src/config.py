@@ -70,30 +70,6 @@ class Config(BaseSettings):
     safety_classifier_endpoint: str = "https://api.anthropic.com"
     """API endpoint for the safety classifier"""
 
-    # Phala TEE config
-    tee_enabled: bool = False
-    """route safety classifications through Phala TEE enclave"""
-    tee_endpoint: str = ""
-    """Phala TEE worker endpoint (e.g. https://your-worker.phala.network)"""
-    tee_verify_attestation: bool = True
-    """verify Intel DCAP attestation before sending data to enclave"""
-    tee_fallback_on_failure: bool = True
-    """fall back to direct classifier if TEE is unreachable"""
-
-    # ERC-8004 on-chain attestation config
-    erc8004_enabled: bool = False
-    """publish TEE attestation results as ERC-8004 tokens on-chain"""
-    erc8004_contract: str = ""
-    """ERC-8004 contract address"""
-    erc8004_chain: str = "base"
-    """chain for ERC-8004 attestation tokens"""
-    erc8004_rpc_url: str = ""
-    """JSON-RPC endpoint for direct on-chain publishing"""
-    erc8004_relayer_url: str = ""
-    """HTTP relayer URL (alternative to direct RPC, handles gas)"""
-    erc8004_publisher_address: str = ""
-    """address to receive minted attestation tokens"""
-
     model_config = SettingsConfigDict(env_file=".env")
 
 
