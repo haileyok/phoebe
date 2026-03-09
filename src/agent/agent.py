@@ -292,6 +292,7 @@ class Agent:
         model_api_key: str | None,
         model_endpoint: str | None = None,
         tool_executor: ToolExecutor | None = None,
+        prompt_mode: str = "judge",
     ) -> None:
         match model_api:
             case "anthropic":
@@ -316,6 +317,8 @@ class Agent:
                 )
 
         self._tool_executor = tool_executor
+        self._prompt_mode = prompt_mode
+        self._system_prompt = build_system_prompt(mode=prompt_mode)
         self._conversation: list[dict[str, Any]] = []
 
     def _get_tools(self) -> list[dict[str, Any]] | None:
@@ -341,6 +344,7 @@ class Agent:
         while True:
             resp = await self._client.complete(
                 messages=self._conversation,
+                system=self._system_prompt,
                 tools=self._get_tools(),
             )
 

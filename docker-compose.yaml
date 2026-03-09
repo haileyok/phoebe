@@ -1,0 +1,50 @@
+version: "3.8"
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    environment:
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-clickhouse}
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  arena:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${ARENA_PORT:-8080}:8080"
+    env_file: .env
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    command: ["python", "main.py", "arena", "--no-dev-mode"]
+
+  admin:
+    build: .
+    env_file: .env
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: 8123
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    command: ["python", "main.py", "admin", "--dev-mode"]
+    stdin_open: true
+    tty: true
+    profiles:
+      - admin
+
+volumes:
+  clickhouse_data:

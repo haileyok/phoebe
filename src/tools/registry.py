@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from src.clickhouse.clickhouse import Clickhouse
-from src.osprey.osprey import Osprey
-from src.ozone.ozone import Ozone
+if TYPE_CHECKING:
+    from src.arena.context import ArenaContext
+    from src.clickhouse.clickhouse import Clickhouse
+    from src.osprey.osprey import Osprey
+    from src.safety.classifier import SafetyClassifier
+    from src.x402.client import X402Client
 
 
 class ToolParameter(BaseModel):
@@ -30,17 +35,26 @@ class Tool(BaseModel):
 
 
 class ToolContext:
-    """a context that has access to various backend services that are available to deno sandboxed tools"""
+    """
+    Context providing backend services to deno-sandboxed tools.
+
+    Supports both the original Phoebe T&S tools (clickhouse) and the new
+    Sandbox Arena tools (x402, safety classifier, arena state).
+    """
 
     def __init__(
         self,
         clickhouse: Clickhouse | None = None,
+        x402_client: X402Client | None = None,
+        safety_classifier: SafetyClassifier | None = None,
+        arena: ArenaContext | None = None,
         osprey: Osprey | None = None,
-        ozone: Ozone | None = None,
     ) -> None:
         self._clickhouse = clickhouse
+        self._x402_client = x402_client
+        self._safety_classifier = safety_classifier
+        self._arena = arena
         self._osprey = osprey
-        self._ozone = ozone
 
     @property
     def clickhouse(self) -> Clickhouse:
@@ -49,16 +63,28 @@ class ToolContext:
         return self._clickhouse
 
     @property
+    def x402_client(self) -> X402Client:
+        if self._x402_client is None:
+            raise RuntimeError("x402 client not configured")
+        return self._x402_client
+
+    @property
+    def safety_classifier(self) -> SafetyClassifier:
+        if self._safety_classifier is None:
+            raise RuntimeError("Safety classifier not configured")
+        return self._safety_classifier
+
+    @property
+    def arena(self) -> ArenaContext:
+        if self._arena is None:
+            raise RuntimeError("Arena context not configured")
+        return self._arena
+
+    @property
     def osprey(self) -> Osprey:
         if self._osprey is None:
             raise RuntimeError("Osprey client not configured")
         return self._osprey
-
-    @property
-    def ozone(self) -> Ozone:
-        if self._ozone is None:
-            raise RuntimeError("Ozone client not configured")
-        return self._ozone
 
 
 class ToolRegistry:

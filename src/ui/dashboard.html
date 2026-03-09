@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phoebe T&amp;S Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242736;
+    --border: #2e3144;
+    --text: #e4e6ed;
+    --text2: #9499ad;
+    --accent: #6c7bf7;
+    --accent-dim: #4a57d0;
+    --red: #ef4444;
+    --red-dim: #7f1d1d;
+    --green: #22c55e;
+    --green-dim: #14532d;
+    --orange: #f59e0b;
+    --orange-dim: #78350f;
+    --blue: #3b82f6;
+    --radius: 8px;
+    --font: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* Layout */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header .badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--accent-dim);
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .header-stats {
+    display: flex;
+    gap: 20px;
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .header-stats .stat-val {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto 1fr;
+    gap: 16px;
+    padding: 16px 24px;
+    height: calc(100vh - 57px);
+  }
+
+  /* Panels */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text2);
+    flex-shrink: 0;
+  }
+
+  .panel-body {
+    padding: 16px;
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  /* Prompt Checker (top-left) */
+  .checker { grid-column: 1; grid-row: 1; }
+
+  .prompt-input {
+    width: 100%;
+    min-height: 80px;
+    max-height: 150px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 12px;
+    font-family: var(--font);
+    font-size: 13px;
+    resize: vertical;
+  }
+
+  .prompt-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .prompt-input::placeholder { color: var(--text2); }
+
+  .checker-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .btn {
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    border: none;
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+
+  .btn:hover { opacity: 0.85; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text2);
+  }
+
+  .category-select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 8px 12px;
+    font-family: var(--font);
+    font-size: 12px;
+    flex: 1;
+  }
+
+  .category-select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  /* Classification Result */
+  .result-card {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    display: none;
+  }
+
+  .result-card.visible { display: block; }
+
+  .result-verdict {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  .verdict-block { color: var(--red); }
+  .verdict-allow { color: var(--green); }
+
+  .result-meta {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    font-size: 11px;
+  }
+
+  .result-meta dt { color: var(--text2); }
+  .result-meta dd { color: var(--text); }
+
+  /* Category Coverage (top-right) */
+  .coverage { grid-column: 2; grid-row: 1; }
+
+  .cat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .cat-card {
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .cat-card:hover { border-color: var(--accent); }
+  .cat-card.active { border-color: var(--accent); background: var(--surface2); }
+
+  .cat-card-name {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+
+  .cat-card-count {
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  .cat-indicator {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+
+  /* Breach Logs (bottom, full width) */
+  .logs { grid-column: 1 / -1; grid-row: 2; }
+
+  .logs-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .search-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 6px 10px;
+    font-family: var(--font);
+    font-size: 12px;
+    width: 250px;
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .filter-select {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 6px 10px;
+    font-family: var(--font);
+    font-size: 12px;
+  }
+
+  .time-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    padding: 6px 10px;
+    font-family: var(--font);
+    font-size: 12px;
+  }
+
+  .time-input::-webkit-calendar-picker-indicator {
+    filter: invert(0.7);
+  }
+
+  .log-count {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text2);
+  }
+
+  /* Log table */
+  .log-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .log-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .log-table th {
+    background: var(--surface2);
+    padding: 8px 12px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text2);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .log-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    vertical-align: top;
+  }
+
+  .log-table tr:hover td { background: var(--surface2); }
+
+  .severity-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  .sev-1, .sev-2 { background: var(--orange-dim); color: var(--orange); }
+  .sev-3 { background: var(--orange-dim); color: var(--orange); }
+  .sev-4 { background: var(--red-dim); color: var(--red); }
+  .sev-5 { background: var(--red-dim); color: var(--red); }
+
+  .category-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--surface2);
+    color: var(--text2);
+    white-space: nowrap;
+  }
+
+  .prompt-preview {
+    max-width: 350px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text2);
+  }
+
+  .status-block {
+    color: var(--red);
+    font-weight: 600;
+  }
+
+  .status-allow {
+    color: var(--green);
+    font-weight: 600;
+  }
+
+  /* Loading */
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .loading-row td {
+    text-align: center;
+    color: var(--text2);
+    padding: 24px;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 32px;
+    color: var(--text2);
+    font-size: 12px;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Phoebe <span class="badge">T&amp;S Dashboard</span></h1>
+  <div class="header-stats">
+    <span>Breaches <span class="stat-val" id="stat-total">--</span></span>
+    <span>Categories <span class="stat-val" id="stat-categories">7</span></span>
+    <span>Last 24h <span class="stat-val" id="stat-24h">--</span></span>
+  </div>
+</div>
+
+<div class="main">
+
+  <!-- Prompt Checker -->
+  <div class="panel checker">
+    <div class="panel-header">
+      Prompt Checker
+      <span id="classify-status"></span>
+    </div>
+    <div class="panel-body">
+      <textarea class="prompt-input" id="prompt-input"
+        placeholder="Enter a prompt to check against GA Guard policy..."></textarea>
+      <div class="checker-controls">
+        <select class="category-select" id="category-select">
+          <option value="all">All Categories</option>
+          <option value="pii_ip">PII &amp; IP</option>
+          <option value="illicit_activities">Illicit Activities</option>
+          <option value="hate">Hate</option>
+          <option value="sexual_content">Sexual Content</option>
+          <option value="prompt_security">Prompt Security</option>
+          <option value="violence_self_harm">Violence &amp; Self-Harm</option>
+          <option value="misinformation">Misinformation</option>
+        </select>
+        <button class="btn btn-primary" id="classify-btn" onclick="classifyPrompt()">Classify</button>
+        <button class="btn btn-secondary" onclick="clearResult()">Clear</button>
+      </div>
+      <div class="result-card" id="result-card">
+        <div class="result-verdict" id="result-verdict"></div>
+        <dl class="result-meta" id="result-meta"></dl>
+      </div>
+    </div>
+  </div>
+
+  <!-- Category Coverage -->
+  <div class="panel coverage">
+    <div class="panel-header">
+      Policy Categories
+      <span style="font-weight:400; text-transform:none;">click to filter</span>
+    </div>
+    <div class="panel-body">
+      <div class="cat-grid" id="cat-grid"></div>
+    </div>
+  </div>
+
+  <!-- Breach Logs -->
+  <div class="panel logs">
+    <div class="panel-header">Security Breach Logs</div>
+    <div class="logs-toolbar">
+      <input class="search-input" id="search-input" type="text"
+        placeholder="Search prompts, categories..." oninput="filterLogs()">
+      <select class="filter-select" id="severity-filter" onchange="filterLogs()">
+        <option value="">All Severities</option>
+        <option value="5">Catastrophic (5)</option>
+        <option value="4">Critical (4)</option>
+        <option value="3">High (3)</option>
+        <option value="2">Medium (2)</option>
+        <option value="1">Low (1)</option>
+      </select>
+      <input class="time-input" id="time-from" type="datetime-local" onchange="loadBreaches()" title="From">
+      <input class="time-input" id="time-to" type="datetime-local" onchange="loadBreaches()" title="To">
+      <button class="btn btn-secondary" onclick="loadBreaches()">Refresh</button>
+      <span class="log-count" id="log-count"></span>
+    </div>
+    <div class="panel-body" style="padding:0;">
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th style="width:160px">Time</th>
+            <th style="width:130px">Category</th>
+            <th style="width:80px">Severity</th>
+            <th>Prompt</th>
+            <th style="width:80px">Verdict</th>
+            <th style="width:160px">Matched Rule</th>
+          </tr>
+        </thead>
+        <tbody id="log-tbody">
+          <tr class="loading-row"><td colspan="6"><span class="spinner"></span> Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = window.location.origin;
+let allBreaches = [];
+let activeCategory = null;
+
+const CATEGORY_NAMES = {
+  pii_ip: 'PII & IP',
+  illicit_activities: 'Illicit Activities',
+  hate: 'Hate',
+  sexual_content: 'Sexual Content',
+  prompt_security: 'Prompt Security',
+  violence_self_harm: 'Violence & Self-Harm',
+  misinformation: 'Misinformation',
+};
+
+const CATEGORY_COLORS = {
+  pii_ip: '#3b82f6',
+  illicit_activities: '#ef4444',
+  hate: '#f59e0b',
+  sexual_content: '#ec4899',
+  prompt_security: '#8b5cf6',
+  violence_self_harm: '#ef4444',
+  misinformation: '#f97316',
+};
+
+const SEV_LABELS = { 1: 'Low', 2: 'Medium', 3: 'High', 4: 'Critical', 5: 'Catastrophic' };
+
+// --- Init ---
+document.addEventListener('DOMContentLoaded', () => {
+  initTimeInputs();
+  renderCategoryGrid();
+  loadBreaches();
+  loadStats();
+});
+
+function initTimeInputs() {
+  const now = new Date();
+  const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  document.getElementById('time-to').value = toLocalISO(now);
+  document.getElementById('time-from').value = toLocalISO(yesterday);
+}
+
+function toLocalISO(d) {
+  const off = d.getTimezoneOffset();
+  const local = new Date(d.getTime() - off * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+// --- Category Grid ---
+function renderCategoryGrid() {
+  const grid = document.getElementById('cat-grid');
+  grid.innerHTML = '';
+  for (const [id, name] of Object.entries(CATEGORY_NAMES)) {
+    const card = document.createElement('div');
+    card.className = 'cat-card' + (activeCategory === id ? ' active' : '');
+    card.onclick = () => toggleCategory(id);
+    card.innerHTML = `
+      <div class="cat-card-name">
+        <span class="cat-indicator" style="background:${CATEGORY_COLORS[id]}"></span>${name}
+      </div>
+      <div class="cat-card-count" id="cat-count-${id}">-- breaches</div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+function toggleCategory(id) {
+  activeCategory = activeCategory === id ? null : id;
+  renderCategoryGrid();
+  filterLogs();
+}
+
+// --- Stats ---
+async function loadStats() {
+  try {
+    const resp = await fetch(`${API}/api/tns/stats`);
+    const data = await resp.json();
+    document.getElementById('stat-total').textContent = data.total_breaches ?? '--';
+    document.getElementById('stat-24h').textContent = data.last_24h ?? '--';
+
+    if (data.by_category) {
+      for (const [cat, count] of Object.entries(data.by_category)) {
+        const el = document.getElementById(`cat-count-${cat}`);
+        if (el) el.textContent = `${count} breach${count !== 1 ? 'es' : ''}`;
+      }
+    }
+  } catch (e) {
+    console.warn('Stats load failed:', e);
+  }
+}
+
+// --- Breach Logs ---
+async function loadBreaches() {
+  const tbody = document.getElementById('log-tbody');
+  tbody.innerHTML = '<tr class="loading-row"><td colspan="6"><span class="spinner"></span> Loading...</td></tr>';
+
+  const from = document.getElementById('time-from').value;
+  const to = document.getElementById('time-to').value;
+
+  const params = new URLSearchParams();
+  if (from) params.set('from', new Date(from).toISOString());
+  if (to) params.set('to', new Date(to).toISOString());
+  params.set('limit', '500');
+
+  try {
+    const resp = await fetch(`${API}/api/tns/breaches?${params}`);
+    const data = await resp.json();
+    allBreaches = data.breaches || [];
+    filterLogs();
+    loadStats();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-state">Failed to load breaches: ${e.message}</td></tr>`;
+  }
+}
+
+function filterLogs() {
+  const search = document.getElementById('search-input').value.toLowerCase();
+  const severity = document.getElementById('severity-filter').value;
+  const tbody = document.getElementById('log-tbody');
+
+  let filtered = allBreaches;
+
+  if (activeCategory) {
+    filtered = filtered.filter(b => b.category === activeCategory || b.policy_category === activeCategory);
+  }
+  if (severity) {
+    filtered = filtered.filter(b => String(b.severity) === severity);
+  }
+  if (search) {
+    filtered = filtered.filter(b =>
+      (b.prompt_text || '').toLowerCase().includes(search) ||
+      (b.category || '').toLowerCase().includes(search) ||
+      (b.matched_block_rule || '').toLowerCase().includes(search) ||
+      (b.explanation || '').toLowerCase().includes(search)
+    );
+  }
+
+  document.getElementById('log-count').textContent = `${filtered.length} of ${allBreaches.length} entries`;
+
+  if (filtered.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No breaches found matching filters</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(b => {
+    const ts = b.timestamp ? new Date(b.timestamp * 1000).toLocaleString() : '--';
+    const cat = b.policy_category || b.category || '--';
+    const catName = CATEGORY_NAMES[cat] || cat;
+    const sev = b.severity || 0;
+    const prompt = escapeHtml(truncate(b.prompt_text || b.prompt || '', 120));
+    const rule = escapeHtml(truncate(b.matched_block_rule || '', 50));
+    const unsafe = b.unsafe !== false;
+
+    return `<tr>
+      <td>${ts}</td>
+      <td><span class="category-badge">${catName}</span></td>
+      <td><span class="severity-badge sev-${sev}">${SEV_LABELS[sev] || sev}</span></td>
+      <td class="prompt-preview" title="${escapeHtml(b.prompt_text || b.prompt || '')}">${prompt}</td>
+      <td class="${unsafe ? 'status-block' : 'status-allow'}">${unsafe ? 'BLOCK' : 'ALLOW'}</td>
+      <td style="font-size:11px; color:var(--text2);" title="${escapeHtml(b.matched_block_rule || '')}">${rule}</td>
+    </tr>`;
+  }).join('');
+}
+
+// --- Classify Prompt ---
+async function classifyPrompt() {
+  const input = document.getElementById('prompt-input').value.trim();
+  if (!input) return;
+
+  const category = document.getElementById('category-select').value;
+  const btn = document.getElementById('classify-btn');
+  const status = document.getElementById('classify-status');
+
+  btn.disabled = true;
+  status.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const resp = await fetch(`${API}/api/tns/classify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: input, category: category === 'all' ? null : category }),
+    });
+    const data = await resp.json();
+    showResult(data);
+  } catch (e) {
+    showResult({ error: e.message });
+  } finally {
+    btn.disabled = false;
+    status.innerHTML = '';
+  }
+}
+
+function showResult(data) {
+  const card = document.getElementById('result-card');
+  const verdict = document.getElementById('result-verdict');
+  const meta = document.getElementById('result-meta');
+
+  card.classList.add('visible');
+
+  if (data.error) {
+    verdict.innerHTML = `<span style="color:var(--orange);">Error: ${escapeHtml(data.error)}</span>`;
+    meta.innerHTML = '';
+    return;
+  }
+
+  const unsafe = data.unsafe;
+  verdict.innerHTML = unsafe
+    ? '<span class="verdict-block">BLOCK</span>'
+    : '<span class="verdict-allow">ALLOW</span>';
+
+  const cat = CATEGORY_NAMES[data.policy_category] || data.policy_category || '--';
+  const sev = data.severity || 0;
+
+  meta.innerHTML = `
+    <dt>Category</dt><dd>${escapeHtml(cat)}</dd>
+    <dt>Severity</dt><dd><span class="severity-badge sev-${sev}">${SEV_LABELS[sev] || sev}</span></dd>
+    ${data.matched_block_rule ? `<dt>Block Rule</dt><dd>${escapeHtml(data.matched_block_rule)}</dd>` : ''}
+    <dt>Explanation</dt><dd>${escapeHtml(data.explanation || '--')}</dd>
+  `;
+}
+
+function clearResult() {
+  document.getElementById('result-card').classList.remove('visible');
+  document.getElementById('prompt-input').value = '';
+}
+
+// --- Helpers ---
+function escapeHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function truncate(s, n) {
+  return s.length > n ? s.slice(0, n) + '...' : s;
+}
+
+// Keyboard shortcut: Ctrl/Cmd+Enter to classify
+document.getElementById('prompt-input').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') classifyPrompt();
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Deploy: connect your repo on Render and it auto-detects this file.
+
+services:
+  # ClickHouse — persistent storage
+  - type: private
+    name: clickhouse
+    runtime: docker
+    dockerfilePath: ./Dockerfile.clickhouse
+    disk:
+      name: clickhouse-data
+      mountPath: /var/lib/clickhouse
+      sizeGB: 10
+    envVars:
+      - key: CLICKHOUSE_PASSWORD
+        generateValue: true
+
+  # Arena HTTP server (the red teaming marketplace)
+  - type: web
+    name: sandbox-arena
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerCommand: python main.py arena --no-dev-mode
+    healthCheckPath: /bounties
+    envVars:
+      - key: CLICKHOUSE_HOST
+        fromService:
+          name: clickhouse
+          type: private
+          property: host
+      - key: CLICKHOUSE_PORT
+        value: "8123"
+      - key: CLICKHOUSE_PASSWORD
+        fromService:
+          name: clickhouse
+          type: private
+          envVarKey: CLICKHOUSE_PASSWORD
+      - key: MODEL_API_KEY
+        sync: false
+      - key: X402_WALLET_PRIVATE_KEY
+        sync: false
+      - key: X402_WALLET_ADDRESS
+        sync: false
+      - key: X402_CHAIN
+        value: base
+      - key: X402_FACILITATOR_URL
+        sync: false
+      - key: ARENA_DEV_MODE
+        value: "false"
+      - key: ARENA_HOST
+        value: "0.0.0.0"
+      - key: ARENA_PORT
+        value: "8080"
+      - key: ARENA_WALLET
+        sync: false
