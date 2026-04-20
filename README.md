@@ -1,4 +1,4 @@
-# Phoebe
+# Sara
 
 Phoebe is an AI-powered trust and safety agent for the [AT Protocol](https://atproto.com/) network. It automates safety operations by analyzing network threats and creating rules to detect and resolve emerging issues. Phoebe uses three different services to achieve this:
 
