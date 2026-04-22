@@ -35,6 +35,7 @@ from src.arena.models import (
 from src.arena.scorer import Scorer
 from src.arena.store import ArenaStore
 from src.arena.taxonomy import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS, SafetyCategory
+from src.ozone.ozone import Ozone
 from src.ui.dashboard import TNS_DDL, TNSDashboard
 
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ class ArenaServer:
         facilitator_url: str = "",
         dev_mode: bool = False,
         safety_classifier: Any | None = None,
+        ozone: Ozone | None = None,
     ) -> None:
         self._scorer = scorer
         self._store = store
@@ -88,6 +90,7 @@ class ArenaServer:
         self._dev_mode = dev_mode
         self._rate_limiter = RateLimiter()
         self._safety_classifier = safety_classifier
+        self._ozone = ozone
 
     def build_app(self) -> Starlette:
         routes = [
@@ -99,6 +102,7 @@ class ArenaServer:
             Route("/api/leaderboard", self._get_leaderboard, methods=["GET"]),
             Route("/api/taxonomy", self._get_taxonomy, methods=["GET"]),
             Route("/api/health", self._health, methods=["GET"]),
+            Route("/api/ozone/evaluate", self._ozone_evaluate, methods=["POST"]),
         ]
 
         # Mount T&S analyst dashboard if safety classifier is available
@@ -389,6 +393,60 @@ class ArenaServer:
             for cat in SafetyCategory
         ]
         return JSONResponse({"categories": categories})
+
+    async def _ozone_evaluate(self, request: Request) -> Response:
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+        subject = body.get("subject", "")
+        if not subject:
+            return JSONResponse({"error": "subject is required"}, status_code=400)
+
+        verdict = body.get("verdict", "")
+        if verdict not in ("safe", "unsafe"):
+            return JSONResponse({"error": "verdict must be 'safe' or 'unsafe'"}, status_code=400)
+
+        try:
+            severity = int(body.get("severity", 0))
+            confidence = float(body.get("confidence", 1.0))
+        except (TypeError, ValueError):
+            return JSONResponse({"error": "severity must be int and confidence must be float"}, status_code=400)
+
+        if not (0 <= severity <= 5):
+            return JSONResponse({"error": "severity must be 0-5"}, status_code=400)
+        if not (0.0 <= confidence <= 1.0):
+            return JSONResponse({"error": "confidence must be 0.0-1.0"}, status_code=400)
+
+        verdict_dict: dict[str, Any] = {
+            "unsafe": verdict == "unsafe",
+            "verdict": verdict,
+            "category": body.get("category", "unknown"),
+            "severity": severity,
+            "confidence": confidence,
+            "rule_triggered": body.get("rule_triggered", ""),
+        }
+
+        ozone = self._ozone
+        if ozone is None:
+            ozone = Ozone(store=self._store)
+
+        try:
+            result = await ozone.evaluate(subject, verdict_dict)
+        except Exception:
+            logger.exception("Ozone evaluate failed for subject=%s", subject)
+            return JSONResponse({"error": "internal enforcement error"}, status_code=500)
+
+        return JSONResponse({
+            "enforcement_id": result.enforcement_id,
+            "action": result.action,
+            "mode": result.mode.value,
+            "label": result.label,
+            "requires_human_review": result.requires_human_review,
+            "rollback_eligible": result.rollback_eligible,
+            "timestamp_ms": result.timestamp_ms,
+        })
 
     async def _health(self, request: Request) -> Response:
         bounties = await self._store.list_active_bounties()
