@@ -70,6 +70,20 @@ class Config(BaseSettings):
     safety_classifier_endpoint: str = "https://api.anthropic.com"
     """API endpoint for the safety classifier"""
 
+    # Ozone enforcement
+    ozone_enabled: bool = True
+    """enable the Ozone enforcement layer"""
+    ozone_default_mode: str = "sync"
+    """default enforcement mode: sync | async | quarantine"""
+    ozone_false_positive_threshold: float = 0.02
+    """false-positive rate above which auto-rollback is triggered (2%)"""
+    ozone_human_review_queue_size: int = 100
+    """maximum number of items in the human review queue"""
+    ozone_auto_rollback_enabled: bool = True
+    """automatically rollback enforcements when false-positive rate exceeds threshold"""
+    ozone_metrics_window_hours: int = 24
+    """rolling window (hours) for false-positive rate calculation"""
+
     model_config = SettingsConfigDict(env_file=".env")
 
 
