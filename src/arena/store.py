@@ -9,7 +9,7 @@ and the leaderboard — is persisted to ClickHouse tables.
 import json
 import logging
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.arena.models import (
     AttackPrompt,
@@ -21,6 +21,9 @@ from src.arena.models import (
     SubmissionStatus,
 )
 from src.clickhouse.clickhouse import Clickhouse
+
+if TYPE_CHECKING:
+    from src.ozone.ozone import EnforcementResult
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +109,41 @@ ARENA_DDL = [
         bounty_id        String DEFAULT ''
     ) ENGINE = MergeTree()
       ORDER BY (timestamp, tx_hash)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS arena.enforcement_log (
+        enforcement_id    String,
+        subject           String,
+        label             String,
+        action            String,
+        mode              String,
+        verdict           String,
+        severity          UInt8,
+        confidence        Float32,
+        rule_triggered    String,
+        requires_human_review UInt8 DEFAULT 0,
+        rollback_eligible UInt8 DEFAULT 0,
+        rollback_reason   String DEFAULT '',
+        timestamp_ms      Int64,
+        created_at        DateTime DEFAULT now()
+    ) ENGINE = MergeTree()
+      ORDER BY (timestamp_ms, enforcement_id)
+      PARTITION BY toYYYYMM(created_at)
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS arena.rule_performance_metrics (
+        rule_name         String,
+        label             String,
+        window_start      DateTime,
+        window_end        DateTime,
+        total_enforcements UInt32,
+        confirmed_violations UInt32,
+        false_positives   UInt32,
+        false_positive_rate Float32,
+        auto_rollback_triggered UInt8 DEFAULT 0,
+        updated_at        DateTime DEFAULT now()
+    ) ENGINE = ReplacingMergeTree(updated_at)
+      ORDER BY (rule_name, label, window_start)
     """,
 ]
 
@@ -400,6 +438,131 @@ class ArenaStore:
             )
         """
         await self._ch.query(sql)
+
+    # ------------------------------------------------------------------
+    # Coverage stats (aggregated from evaluations)
+    # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Ozone enforcement log
+    # ------------------------------------------------------------------
+
+    async def save_enforcement_result(self, result: EnforcementResult) -> None:
+        sql = f"""
+            INSERT INTO arena.enforcement_log (
+                enforcement_id, subject, label, action, mode, verdict,
+                severity, confidence, rule_triggered,
+                requires_human_review, rollback_eligible, rollback_reason,
+                timestamp_ms
+            ) VALUES (
+                '{_esc(result.enforcement_id)}',
+                '{_esc(result.subject)}',
+                '{_esc(result.label)}',
+                '{_esc(result.action)}',
+                '{_esc(result.mode.value)}',
+                '{_esc(result.verdict)}',
+                {result.severity},
+                {result.confidence},
+                '{_esc(result.rule_triggered)}',
+                {int(result.requires_human_review)},
+                {int(result.rollback_eligible)},
+                '',
+                {result.timestamp_ms}
+            )
+        """
+        await self._ch.query(sql)
+
+    async def get_enforcement_by_id(self, enforcement_id: str) -> dict[str, Any] | None:
+        sql = f"""
+            SELECT
+                enforcement_id, subject, label, action, mode, verdict,
+                severity, confidence, rule_triggered,
+                requires_human_review, rollback_eligible, timestamp_ms
+            FROM arena.enforcement_log
+            WHERE enforcement_id = '{_esc(enforcement_id)}'
+            ORDER BY timestamp_ms DESC
+            LIMIT 1
+        """
+        resp = await self._ch.query(sql)
+        rows = resp.result_rows  # type: ignore
+        if not rows:
+            return None
+        row = rows[0]
+        return {
+            "enforcement_id": str(row[0]),
+            "subject": str(row[1]),
+            "label": str(row[2]),
+            "action": str(row[3]),
+            "mode": str(row[4]),
+            "verdict": str(row[5]),
+            "severity": int(row[6]),
+            "confidence": float(row[7]),
+            "rule_triggered": str(row[8]),
+            "requires_human_review": bool(row[9]),
+            "rollback_eligible": bool(row[10]),
+            "timestamp_ms": int(row[11]),
+        }
+
+    async def get_false_positive_rate(self, label: str, window_hours: int = 24) -> float:
+        sql = f"""
+            SELECT
+                sum(false_positives) AS fp,
+                sum(total_enforcements) AS total
+            FROM arena.rule_performance_metrics FINAL
+            WHERE label = '{_esc(label)}'
+              AND window_start >= now() - INTERVAL {window_hours} HOUR
+        """
+        try:
+            resp = await self._ch.query(sql)
+            rows = resp.result_rows  # type: ignore
+            if rows and rows[0][1] and int(rows[0][1]) > 0:
+                return float(rows[0][0]) / float(rows[0][1])
+        except Exception:
+            logger.warning("Failed to query false-positive rate for label=%s", label, exc_info=True)
+        return 0.0
+
+    async def update_rule_metrics(
+        self,
+        rule_name: str,
+        label: str,
+        is_false_positive: bool,
+    ) -> None:
+        now_sql = "now()"
+        fp_increment = 1 if is_false_positive else 0
+        sql = f"""
+            INSERT INTO arena.rule_performance_metrics (
+                rule_name, label, window_start, window_end,
+                total_enforcements, confirmed_violations, false_positives,
+                false_positive_rate, auto_rollback_triggered
+            )
+            SELECT
+                '{_esc(rule_name)}',
+                '{_esc(label)}',
+                toStartOfHour({now_sql}),
+                toStartOfHour({now_sql}) + INTERVAL 1 HOUR,
+                COALESCE(total_enforcements, 0) + 1,
+                COALESCE(confirmed_violations, 0) + {1 - fp_increment},
+                COALESCE(false_positives, 0) + {fp_increment},
+                (COALESCE(false_positives, 0) + {fp_increment}) /
+                    (COALESCE(total_enforcements, 0) + 1),
+                0
+            FROM (
+                SELECT
+                    argMax(total_enforcements, updated_at) AS total_enforcements,
+                    argMax(confirmed_violations, updated_at) AS confirmed_violations,
+                    argMax(false_positives, updated_at) AS false_positives
+                FROM arena.rule_performance_metrics FINAL
+                WHERE rule_name = '{_esc(rule_name)}'
+                  AND label = '{_esc(label)}'
+                  AND window_start = toStartOfHour({now_sql})
+            )
+        """
+        try:
+            await self._ch.query(sql)
+        except Exception:
+            logger.warning(
+                "Failed to update rule metrics rule=%s label=%s", rule_name, label, exc_info=True
+            )
 
     # ------------------------------------------------------------------
     # Coverage stats (aggregated from evaluations)
