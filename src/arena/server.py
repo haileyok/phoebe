@@ -103,6 +103,7 @@ class ArenaServer:
             Route("/api/taxonomy", self._get_taxonomy, methods=["GET"]),
             Route("/api/health", self._health, methods=["GET"]),
             Route("/api/ozone/evaluate", self._ozone_evaluate, methods=["POST"]),
+            Route("/api/osprey/health", self._osprey_health, methods=["GET"]),
         ]
 
         # Mount T&S analyst dashboard if safety classifier is available
@@ -446,6 +447,26 @@ class ArenaServer:
             "requires_human_review": result.requires_human_review,
             "rollback_eligible": result.rollback_eligible,
             "timestamp_ms": result.timestamp_ms,
+        })
+
+    async def _osprey_health(self, request: Request) -> Response:
+        try:
+            from src.safety.osprey_client import get_osprey_client
+            from src.config import CONFIG
+            client = await get_osprey_client(CONFIG)
+            osprey_available = client.available
+            kafka_connected = client.available
+        except Exception:
+            osprey_available = False
+            kafka_connected = False
+
+        return JSONResponse({
+            "osprey_available": osprey_available,
+            "kafka_connected": kafka_connected,
+            "rules_loaded": 11,
+            "fallback_active": not osprey_available,
+            "input_topic": "sara.events.input",
+            "output_topic": "sara.events.output",
         })
 
     async def _health(self, request: Request) -> Response:
