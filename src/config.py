@@ -84,6 +84,20 @@ class Config(BaseSettings):
     ozone_metrics_window_hours: int = 24
     """rolling window (hours) for false-positive rate calculation"""
 
+    # Osprey rule engine
+    osprey_enabled: bool = True
+    """enable the Osprey SML rule engine"""
+    osprey_kafka_servers: str = "localhost:9092"
+    """Kafka bootstrap servers for Osprey"""
+    osprey_input_topic: str = "sara.events.input"
+    """Kafka topic for routing events sent to Osprey"""
+    osprey_output_topic: str = "sara.events.output"
+    """Kafka topic for Osprey verdict responses"""
+    osprey_timeout_ms: int = 500
+    """maximum wait time (ms) for an Osprey verdict before falling back"""
+    osprey_fallback_to_python: bool = True
+    """use Python keyword rules if Osprey is unavailable"""
+
     model_config = SettingsConfigDict(env_file=".env")
 
 
