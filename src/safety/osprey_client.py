@@ -164,8 +164,9 @@ class OspreyClient:
 
         atlas = ""
         for rule in rules:
+            rule_norm = rule.lower().replace("_", "")
             for key, tactic in TACTIC_MAP.items():
-                if key in rule.lower():
+                if key.replace("_", "") in rule_norm:
                     atlas = tactic
                     break
             if atlas:
