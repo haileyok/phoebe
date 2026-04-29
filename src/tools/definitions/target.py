@@ -1,7 +1,7 @@
 """
 Target model tools — query the model being red-teamed.
 
-These tools are available in the Deno sandbox so Phoebe's LLM agent can
+These tools are available in the Deno sandbox so Sara's LLM agent can
 interact with the target model during evaluation.
 """
 

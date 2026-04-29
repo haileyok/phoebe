@@ -9,8 +9,8 @@ as on-chain tokens. Each token represents a cryptographic proof that:
 2. The enclave processed data without exposing it to the host
 3. The attestation was verified against Intel's DCAP collateral
 
-This lets data partners (e.g. Indeed) independently verify that Phoebe's
-safety classifier ran inside a TEE — without trusting Phoebe's operator.
+This lets data partners (e.g. Indeed) independently verify that Sara's
+safety classifier ran inside a TEE — without trusting Sara's operator.
 
 Contract interface (ERC-8004):
     - mint(to, attestationData) → tokenId

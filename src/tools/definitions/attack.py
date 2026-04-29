@@ -1,8 +1,8 @@
 """
-Attack tools — used by Phoebe in red team mode to generate, execute,
+Attack tools — used by Sara in red team mode to generate, execute,
 and log adversarial attacks based on safety rules.
 
-These tools enable Phoebe to autonomously:
+These tools enable Sara to autonomously:
   1. Read Osprey safety rules and understand defenses
   2. Generate targeted attack prompts
   3. Execute attacks and classify results
@@ -76,7 +76,7 @@ async def attack_log_finding(
     )
     submission = Submission(
         bounty_id=bounty_id,
-        teamer_wallet="phoebe-redteam",
+        teamer_wallet="sara-redteam",
         prompts=[attack_prompt],
         status=SubmissionStatus.SCORED,
     )
@@ -130,7 +130,7 @@ async def attack_run_campaign(
     Orchestrate a red team campaign.
 
     This tool sets up the campaign context and returns the plan.
-    The actual attack generation and execution is done by Phoebe's
+    The actual attack generation and execution is done by Sara's
     LLM reasoning in the Deno sandbox, using target.generate,
     safety.classify, and attack.log_finding in a loop.
     """

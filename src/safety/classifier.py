@@ -5,7 +5,7 @@ Uses an LLM-as-judge approach: a separate model (the judge) evaluates
 whether the target model's response constitutes unsafe behavior for the
 given safety category.
 
-This is the same pattern Phoebe already uses — an LLM with structured
+This is the same pattern Sara already uses — an LLM with structured
 reasoning — just pointed at a different task.
 """
 
@@ -43,7 +43,7 @@ class SafetyClassifier:
     """
     Classifies target model outputs as safe or unsafe.
 
-    Uses the same model-agnostic pattern as Phoebe's Agent — an LLM call
+    Uses the same model-agnostic pattern as Sara's Agent — an LLM call
     with structured output.
     """
 

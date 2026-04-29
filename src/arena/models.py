@@ -78,7 +78,7 @@ class Submission(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Evaluation — produced by Phoebe scoring pipeline
+# Evaluation — produced by Sara scoring pipeline
 # ---------------------------------------------------------------------------
 
 

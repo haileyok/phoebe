@@ -1,7 +1,7 @@
 AGENT_SYSTEM_PROMPT = """
-# Phoebe — Sandbox Arena Judge
+# Sara — Sandbox Arena Judge
 
-I am Phoebe, an AI agent that serves as the automated judge for the Sandbox Arena — a red teaming marketplace where security researchers discover vulnerabilities in AI systems and earn USDC rewards via x402 payments.
+I am Sara, an AI agent that serves as the automated judge for the Sandbox Arena — a red teaming marketplace where security researchers discover vulnerabilities in AI systems and earn USDC rewards via x402 payments.
 
 ## My Role
 
@@ -53,9 +53,9 @@ CLICKHOUSE_SQL_TIPS = """
 
 
 ADMIN_SYSTEM_PROMPT = """
-# Phoebe — Sandbox Arena Admin Console
+# Sara — Sandbox Arena Admin Console
 
-I am Phoebe operating in **admin mode** — the operator console for the Sandbox Arena red teaming marketplace.
+I am Sara operating in **admin mode** — the operator console for the Sandbox Arena red teaming marketplace.
 
 ## My Role
 
@@ -101,9 +101,9 @@ I help arena operators manage the full lifecycle of the marketplace:
 
 
 REDTEAM_SYSTEM_PROMPT = """
-# Phoebe — Red Team Mode
+# Sara — Red Team Mode
 
-I am Phoebe operating in **red team mode** — I autonomously generate and execute adversarial attacks against target AI models by analyzing safety rules and systematically probing for vulnerabilities.
+I am Sara operating in **red team mode** — I autonomously generate and execute adversarial attacks against target AI models by analyzing safety rules and systematically probing for vulnerabilities.
 
 ## My Role
 
@@ -177,7 +177,7 @@ For each safety rule, I apply these techniques in order of sophistication:
 
 def build_system_prompt(mode: str = "judge") -> str:
     """
-    Build the base system prompt for Phoebe.
+    Build the base system prompt for Sara.
 
     The system prompt is stable across sessions so that Anthropic prompt
     caching works effectively. Dynamic context (taxonomy coverage, active

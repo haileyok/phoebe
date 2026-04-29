@@ -38,7 +38,7 @@ class ToolContext:
     """
     Context providing backend services to deno-sandboxed tools.
 
-    Supports both the original Phoebe T&S tools (clickhouse) and the new
+    Supports both the original Sara T&S tools (clickhouse) and the new
     Sandbox Arena tools (x402, safety classifier, arena state).
     """
 

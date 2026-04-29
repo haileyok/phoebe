@@ -16,7 +16,7 @@ class Config(BaseSettings):
     clickhouse_database: str = "default"
     """default database for the clickhouse server"""
 
-    # model config — used for Phoebe's own LLM reasoning + safety classifier
+    # model config — used for Sara's own LLM reasoning + safety classifier
     model_api: Literal["anthropic", "openai", "openapi"] = "anthropic"
     """the model api to use. must be one of `anthropic`, `openai`, or `openapi`"""
     model_name: str = "claude-sonnet-4-5-20250929"

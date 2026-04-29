@@ -9,7 +9,7 @@ classifier, and returns encrypted results. Neither the host operator nor
 Phala can see the plaintext prompts or verdicts.
 
 Flow:
-    Phoebe → encrypt(prompt) → Phala TEE → decrypt → Claude API → encrypt(result) → Phoebe
+    Sara → encrypt(prompt) → Phala TEE → decrypt → Claude API → encrypt(result) → Sara
 
 The enclave's identity is verified via Intel DCAP remote attestation before
 any data is sent. Attestation quotes can optionally be published on-chain

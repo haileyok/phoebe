@@ -1,7 +1,7 @@
 """
 Safety classification tools — evaluate whether target model outputs are unsafe.
 
-Available in the Deno sandbox so Phoebe's agent can classify outputs during
+Available in the Deno sandbox so Sara's agent can classify outputs during
 the scoring pipeline.
 """
 

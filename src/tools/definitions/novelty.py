@@ -1,7 +1,7 @@
 """
 Novelty detection tools — score how novel an adversarial prompt is.
 
-Adapted from Phoebe's content.similarity tool, retargeted from social media
+Adapted from Sara's content.similarity tool, retargeted from social media
 posts to adversarial prompts. Uses ClickHouse's ngramDistance for similarity
 matching against the attack history table.
 """

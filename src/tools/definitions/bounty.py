@@ -2,7 +2,7 @@
 Bounty management tools — query and manage arena bounties.
 
 Uses the ClickHouse-backed ArenaStore for persistent state.
-Available in the Deno sandbox so Phoebe's agent can inspect bounties
+Available in the Deno sandbox so Sara's agent can inspect bounties
 during evaluation, and for interactive chat mode.
 """
 
