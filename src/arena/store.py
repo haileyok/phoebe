@@ -6,6 +6,8 @@ All arena state — bounties, submissions, evaluations, attack history,
 and the leaderboard — is persisted to ClickHouse tables.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import time
@@ -56,7 +58,8 @@ ARENA_DDL = [
         teamer_wallet    String,
         prompts_json     String,
         submitted_at     Float64,
-        status           String
+        status           String,
+        commitment_hash  String DEFAULT ''
     ) ENGINE = ReplacingMergeTree()
       ORDER BY submission_id
     """,
@@ -227,7 +230,8 @@ class ArenaStore:
                 '{_esc(sub.teamer_wallet)}',
                 '{_esc(prompts_json)}',
                 {sub.submitted_at},
-                '{sub.status.value}'
+                '{sub.status.value}',
+                '{_esc(sub.commitment_hash)}'
             )
         """
         await self._ch.query(sql)
@@ -447,7 +451,7 @@ class ArenaStore:
     # Ozone enforcement log
     # ------------------------------------------------------------------
 
-    async def save_enforcement_result(self, result: EnforcementResult) -> None:
+    async def save_enforcement_result(self, result: "EnforcementResult") -> None:
         sql = f"""
             INSERT INTO arena.enforcement_log (
                 enforcement_id, subject, label, action, mode, verdict,
@@ -620,6 +624,7 @@ def _row_to_submission(row: tuple) -> Submission:
         prompts=prompts,
         submitted_at=float(row[4]),
         status=SubmissionStatus(str(row[5])),
+        commitment_hash=str(row[6]) if len(row) > 6 else "",
     )
 
 

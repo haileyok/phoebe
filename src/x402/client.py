@@ -15,6 +15,8 @@ If no facilitator URL is configured, falls back to direct mode (sends
 the signed payment directly to the server, letting the server settle).
 """
 
+from __future__ import annotations
+
 import base64
 import json
 import logging
@@ -299,6 +301,51 @@ class X402Client:
 
     async def post(self, url: str, **kwargs: Any) -> "X402Response":
         return await self.request("POST", url, **kwargs)
+
+    async def pay_researcher(
+        self,
+        recipient_wallet: str,
+        amount_usdc: float,
+        memo: str = "",
+    ) -> str:
+        """
+        Send USDC directly to a researcher wallet as a payout.
+        Returns the on-chain tx_hash, or raises on failure.
+
+        Uses the facilitator endpoint if configured, otherwise returns a
+        deterministic simulated hash so dev mode works without a live facilitator.
+        """
+        import os
+        import time as _time
+
+        facilitator_url = os.getenv("X402_FACILITATOR_URL", self._facilitator_url)
+
+        payload = {
+            "recipient": recipient_wallet,
+            "amount_usdc": str(amount_usdc),
+            "memo": memo,
+            "sender": self._wallet.address if self._wallet else "",
+            "nonce": str(int(_time.time() * 1000)),
+        }
+
+        if facilitator_url:
+            resp = await self._http.post(
+                f"{facilitator_url}/payout",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("tx_hash", "")
+        else:
+            import hashlib
+            stub = hashlib.sha3_256(
+                f"{recipient_wallet}{amount_usdc}{payload['nonce']}".encode()
+            ).hexdigest()
+            logger.warning(
+                "X402_FACILITATOR_URL not set — payout is SIMULATED (tx=%s)", stub[:16]
+            )
+            return f"simulated-{stub[:32]}"
 
     async def close(self) -> None:
         await self._http.aclose()

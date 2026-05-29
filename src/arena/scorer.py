@@ -8,6 +8,8 @@ Evaluates red team submissions with:
 - Payment logging for audit trail
 """
 
+from __future__ import annotations
+
 import hashlib
 import logging
 

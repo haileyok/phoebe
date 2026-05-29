@@ -17,14 +17,22 @@ class Config(BaseSettings):
     """default database for the clickhouse server"""
 
     # model config — used for Sara's own LLM reasoning + safety classifier
-    model_api: Literal["anthropic", "openai", "openapi"] = "anthropic"
-    """the model api to use. must be one of `anthropic`, `openai`, or `openapi`"""
+    model_api: Literal["anthropic", "openai", "openapi", "kimi", "glm", "deepseek"] = "anthropic"
+    """the model api to use. must be one of `anthropic`, `openai`, `openapi`, `kimi`, `glm`, or `deepseek`"""
     model_name: str = "claude-sonnet-4-5-20250929"
     """the model to use with the given api"""
     model_api_key: str = ""
     """the model api key"""
     model_endpoint: str = ""
     """for openapi model apis, the endpoint to use"""
+
+    # New provider API keys
+    moonshot_api_key: str = ""
+    """API key for Kimi (Moonshot AI) — env: MOONSHOT_API_KEY"""
+    zhipu_api_key: str = ""
+    """API key for GLM (Zhipu AI / Z.ai) — env: ZHIPU_API_KEY"""
+    deepseek_api_key: str = ""
+    """API key for DeepSeek — env: DEEPSEEK_API_KEY"""
 
     # x402 payment config
     x402_wallet_private_key: str = ""

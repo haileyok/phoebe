@@ -5,6 +5,8 @@ These are the core domain objects: bounties, submissions, evaluations,
 and the scoring result. All persisted to ClickHouse.
 """
 
+from __future__ import annotations
+
 import time
 import uuid
 from enum import Enum
@@ -75,6 +77,7 @@ class Submission(BaseModel):
     prompts: list[AttackPrompt] = Field(default_factory=list)
     submitted_at: float = Field(default_factory=_now)
     status: SubmissionStatus = SubmissionStatus.QUEUED
+    commitment_hash: str = ""   # SHA3-256 of canonical prompts JSON at submit time
 
 
 # ---------------------------------------------------------------------------

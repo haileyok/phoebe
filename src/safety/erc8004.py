@@ -191,6 +191,43 @@ class ERC8004Publisher:
             return await self._publish_via_relayer(attestation_data, session.attestation)
         return await self._publish_direct(attestation_data, session.attestation)
 
+    async def record_evaluation_result(
+        self,
+        subject: str,
+        label: str,
+        metadata: dict,
+    ) -> AttestationRecord | None:
+        """
+        Record a scoring evaluation result as an ERC-8004 attestation token.
+        Intended for non-TEE evaluation results — enclaveHash/signerHash are zeroed.
+        Returns None if no relayer or RPC is configured.
+        """
+        result_hash = metadata.get("result_hash", "")
+        metadata_hex = json.dumps(
+            {"subject": subject, "label": label, **metadata}
+        ).encode().hex()
+        attestation_data = {
+            "enclaveHash": "0x" + "0" * 64,
+            "signerHash": "0x" + "0" * 64,
+            "quoteHash": _to_bytes32(result_hash),
+            "timestamp": int(time.time()),
+            "metadata": f"0x{metadata_hex}",
+        }
+
+        class _MockQuote:
+            enclave_hash = "0" * 64
+
+        if self._relayer_url:
+            return await self._publish_via_relayer(attestation_data, _MockQuote())
+        elif self._rpc_url and self._private_key:
+            return await self._publish_direct(attestation_data, _MockQuote())
+        else:
+            logger.warning(
+                "ERC8004: no relayer or RPC configured — attestation SKIPPED for %s",
+                subject[:32]
+            )
+            return None
+
     async def verify_attestation(self, token_id: int) -> bool:
         """
         Verify an ERC-8004 attestation token on-chain.

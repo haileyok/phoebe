@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
+import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -9,8 +12,9 @@ import anthropic
 import httpx
 from anthropic.types import TextBlock, ToolUseBlock
 
-from src.agent.prompt import build_system_prompt
-from src.tools.executor import ToolExecutor
+from src.agent.config import AgentConfig, ModelConfig
+from src.agent.session import InMemorySessionStore, SessionStore
+from src.agent.tools import ToolExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -58,14 +62,15 @@ class AnthropicClient(AgentClient):
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AgentResponse:
-        system_text = system or build_system_prompt()
+        if system is None:
+            raise ValueError("system prompt is required; pass it via Agent.chat() or provide it directly")
         kwargs: dict[str, Any] = {
             "model": self._model_name,
             "max_tokens": 16_000,
             "system": [
                 {
                     "type": "text",
-                    "text": system_text,
+                    "text": system,
                     "cache_control": {"type": "ephemeral"},
                 }
             ],
@@ -95,7 +100,7 @@ class AnthropicClient(AgentClient):
 
         return AgentResponse(
             content=content,
-            stop_reason=msg.stop_reason or "end_turn",  # type: ignore TODO: fix this
+            stop_reason=msg.stop_reason or "end_turn",  # type: ignore
         )
 
     @staticmethod
@@ -103,16 +108,14 @@ class AnthropicClient(AgentClient):
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
         """
-        a helper that adds cache_control breakpoints to the conversation so that
-        the conversation prefix is cached across successive calls. we place a single
-        breakpoint in th last message's content block, combined with the sys-prompt
-        and tool defs breakpoints. ensures that we stay in the 4-breakpoint limit
-        that ant requires
+        Adds cache_control breakpoints to the conversation so that the prefix
+        is cached across successive calls. Places a single breakpoint in the
+        last message's content block, combined with the sys-prompt and tool
+        defs breakpoints. Stays within the 4-breakpoint limit Anthropic requires.
         """
         if not messages:
             return messages
 
-        # shallow-copy the list so we don't mutate the caller's conversation
         messages = list(messages)
         last_msg = dict(messages[-1])
         content = last_msg["content"]
@@ -136,7 +139,7 @@ class AnthropicClient(AgentClient):
 
 
 class OpenAICompatibleClient(AgentClient):
-    """client for openapi compatible apis like openai, moonshot, etc"""
+    """Client for OpenAI-compatible APIs (OpenAI, Moonshot, DeepSeek, Ollama, etc.)."""
 
     def __init__(self, api_key: str, model_name: str, endpoint: str) -> None:
         self._api_key = api_key
@@ -150,7 +153,9 @@ class OpenAICompatibleClient(AgentClient):
         system: str | None = None,
         tools: list[dict[str, Any]] | None = None,
     ) -> AgentResponse:
-        oai_messages = self._convert_messages(messages, system or build_system_prompt())
+        if system is None:
+            raise ValueError("system prompt is required; pass it via Agent.chat() or provide it directly")
+        oai_messages = self._convert_messages(messages, system)
 
         payload: dict[str, Any] = {
             "model": self._model_name,
@@ -179,7 +184,7 @@ class OpenAICompatibleClient(AgentClient):
     def _convert_messages(
         self, messages: list[dict[str, Any]], system: str
     ) -> list[dict[str, Any]]:
-        """for anthropic chats, we'll convert the outputs into a similar format"""
+        """Convert Anthropic-format messages (tool_use, tool_result, reasoning_content) to OAI."""
         result: list[dict[str, Any]] = [{"role": "system", "content": system}]
 
         for msg in messages:
@@ -235,7 +240,7 @@ class OpenAICompatibleClient(AgentClient):
         return result
 
     def _convert_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """convert anthropic tool defs to oai function calling format"""
+        """Convert Anthropic tool defs to OAI function-calling format."""
         result = []
         for t in tools:
             func: dict[str, Any] = {
@@ -248,7 +253,7 @@ class OpenAICompatibleClient(AgentClient):
         return result
 
     def _parse_response(self, data: dict[str, Any]) -> AgentResponse:
-        """convert an oai chat completion resp to agentresponse"""
+        """Convert an OAI chat completion response to AgentResponse."""
         choice = data["choices"][0]
         message = choice["message"]
         finish_reason = choice.get("finish_reason", "stop")
@@ -281,70 +286,103 @@ class OpenAICompatibleClient(AgentClient):
         )
 
 
-MAX_TOOL_RESULT_LENGTH = 10_000
+def _build_client(
+    model_config: ModelConfig, model_override: ModelConfig | None = None
+) -> AgentClient:
+    """Factory: select the right AgentClient for a given ModelConfig."""
+    mc = model_override or model_config
+    api_key = os.environ.get(mc.api_key_env, "")
+    if mc.provider == "anthropic":
+        return AnthropicClient(api_key=api_key, model_name=mc.model_name)
+    elif mc.provider == "openai":
+        return OpenAICompatibleClient(
+            api_key=api_key,
+            model_name=mc.model_name,
+            endpoint="https://api.openai.com/v1",
+        )
+    elif mc.provider == "kimi":
+        # Kimi (Moonshot AI) — temperature must be in [0, 1]
+        return OpenAICompatibleClient(
+            api_key=api_key,
+            model_name=mc.model_name,
+            endpoint=mc.endpoint or "https://api.moonshot.ai/v1",
+        )
+
+    elif mc.provider == "glm":
+        # GLM (Zhipu AI) — no parallel tool calls, no tool_choice=required
+        return OpenAICompatibleClient(
+            api_key=api_key,
+            model_name=mc.model_name,
+            endpoint=mc.endpoint or "https://open.bigmodel.cn/api/paas/v4",
+        )
+
+    elif mc.provider == "deepseek":
+        # DeepSeek — reasoning_content already handled by _parse_response()
+        return OpenAICompatibleClient(
+            api_key=api_key,
+            model_name=mc.model_name,
+            endpoint=mc.endpoint or "https://api.deepseek.com",
+        )
+
+    elif mc.provider == "openapi":
+        if not mc.endpoint:
+            raise ValueError(
+                f"ModelConfig.endpoint is required for provider 'openapi'"
+            )
+        return OpenAICompatibleClient(
+            api_key=api_key,
+            model_name=mc.model_name,
+            endpoint=mc.endpoint,
+        )
+    raise ValueError(f"Unknown provider: {mc.provider}")
 
 
 class Agent:
     def __init__(
         self,
-        model_api: Literal["anthropic", "openai", "openapi"],
-        model_name: str,
-        model_api_key: str | None,
-        model_endpoint: str | None = None,
+        config: AgentConfig,
         tool_executor: ToolExecutor | None = None,
-        prompt_mode: str = "judge",
+        session_store: SessionStore | None = None,
+        model_override: ModelConfig | None = None,
     ) -> None:
-        match model_api:
-            case "anthropic":
-                assert model_api_key
-                self._client: AgentClient = AnthropicClient(
-                    api_key=model_api_key, model_name=model_name
-                )
-            case "openai":
-                assert model_api_key
-                self._client = OpenAICompatibleClient(
-                    api_key=model_api_key,
-                    model_name=model_name,
-                    endpoint="https://api.openai.com/v1",
-                )
-            case "openapi":
-                assert model_api_key
-                assert model_endpoint, "model_endpoint is required for openapi"
-                self._client = OpenAICompatibleClient(
-                    api_key=model_api_key,
-                    model_name=model_name,
-                    endpoint=model_endpoint,
-                )
-
+        self._config = config
         self._tool_executor = tool_executor
-        self._prompt_mode = prompt_mode
-        self._system_prompt = build_system_prompt(mode=prompt_mode)
-        self._conversation: list[dict[str, Any]] = []
+        self._session_store: SessionStore = session_store or InMemorySessionStore()
+        self._client: AgentClient = _build_client(config.default_model, model_override)
 
     def _get_tools(self) -> list[dict[str, Any]] | None:
-        """get tool definitions for the agent"""
-
         if self._tool_executor is None:
             return None
-        return [self._tool_executor.get_execute_code_tool_definition()]
+        defs = self._tool_executor.get_tool_definitions()
+        return defs or None
 
     async def _handle_tool_call(self, tool_use: AgentToolUseBlock) -> dict[str, Any]:
-        """handle a tool call from the model"""
-        if tool_use.name == "execute_code" and self._tool_executor:
-            code = tool_use.input.get("code", "")
-            result = await self._tool_executor.execute_code(code)
-            return result
-        else:
-            return {"error": f"Unknown tool: {tool_use.name}"}
+        if self._tool_executor:
+            return await self._tool_executor.execute(tool_use.name, tool_use.input)
+        return {"error": f"No tool executor. Called: {tool_use.name}"}
 
-    async def chat(self, user_message: str) -> str:
-        """send a message and get a response, handling tool calls"""
-        self._conversation.append({"role": "user", "content": user_message})
+    async def chat(
+        self,
+        user_message: str,
+        session_id: str = "default",
+        mode: str | None = None,
+    ) -> str:
+        """Send a message and get a response, handling tool calls."""
+        resolved_mode = mode or self._config.default_mode
+        session = await self._session_store.get_or_create(
+            session_id,
+            agent_name=self._config.name,
+            mode=resolved_mode,
+        )
+        system_prompt = self._config.get_system_prompt(resolved_mode)
+
+        session.append({"role": "user", "content": user_message})
+        await self._session_store.save(session)
 
         while True:
             resp = await self._client.complete(
-                messages=self._conversation,
-                system=self._system_prompt,
+                messages=session.messages,
+                system=system_prompt,
                 tools=self._get_tools(),
             )
 
@@ -355,7 +393,7 @@ class Agent:
                 if isinstance(block, AgentTextBlock):
                     assistant_content.append({"type": "text", "text": block.text})
                     text_response += block.text
-                elif isinstance(block, AgentToolUseBlock):  # type: ignore TODO: for now this errors because there are no other types, but ignore for now
+                elif isinstance(block, AgentToolUseBlock):  # type: ignore
                     assistant_content.append(
                         {
                             "type": "tool_use",
@@ -371,30 +409,26 @@ class Agent:
             }
             if resp.reasoning_content:
                 assistant_msg["reasoning_content"] = resp.reasoning_content
-            self._conversation.append(assistant_msg)
+            session.append(assistant_msg)
 
-            # find any tool calls that we need to handle
             if resp.stop_reason == "tool_use":
                 tool_results: list[dict[str, Any]] = []
                 for block in resp.content:
                     if isinstance(block, AgentToolUseBlock):
-                        code = block.input.get("code", "")
-                        logger.info("Tool call: %s\n%s", block.name, code)
+                        logger.info("Tool call: %s\n%s", block.name, block.input)
                         result = await self._handle_tool_call(block)
                         is_error = "error" in result
-                        summary = str(result)[:500]
                         logger.info(
                             "Tool result (%s): %s",
                             "error" if is_error else "ok",
-                            summary,
+                            str(result)[:500],
                         )
                         content_str = str(result)
-                        if len(content_str) > MAX_TOOL_RESULT_LENGTH:
+                        if len(content_str) > self._config.max_tool_result_length:
                             content_str = (
-                                content_str[:MAX_TOOL_RESULT_LENGTH]
+                                content_str[: self._config.max_tool_result_length]
                                 + "\n... (truncated)"
                             )
-
                         tool_results.append(
                             {
                                 "type": "tool_result",
@@ -402,10 +436,9 @@ class Agent:
                                 "content": content_str,
                             }
                         )
-
-                self._conversation.append({"role": "user", "content": tool_results})
+                session.append({"role": "user", "content": tool_results})
             else:
-                # once there are no more tool calls, we proceed to the text response
+                await self._session_store.save(session)
                 return text_response
 
     async def run(self):

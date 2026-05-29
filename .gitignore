@@ -13,3 +13,14 @@ wheels/
 
 # cached osprey repo, ruleset, etc.
 /data
+
+# Claude workspace & prompt files
+.claude/
+Claude.md
+MODELS.md
+sara_add_providers_prompt.md
+sara_sarabox_prompt_2.md
+
+# Local generated outputs / old artifacts
+src/agent_rl/mnt/
+agents/phoebe/

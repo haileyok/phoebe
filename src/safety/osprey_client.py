@@ -69,6 +69,7 @@ class OspreyClient:
         self._timeout_ms = timeout_ms
         self._producer = None
         self._consumer = None
+        self._consume_task: asyncio.Task | None = None
         self._available = False
         self._pending: dict[str, asyncio.Future] = {}
 
@@ -90,7 +91,7 @@ class OspreyClient:
             await self._producer.start()
             await self._consumer.start()
             self._available = True
-            asyncio.create_task(self._consume_verdicts())
+            self._consume_task = asyncio.create_task(self._consume_verdicts())
             logger.info("Osprey client connected to Kafka")
         except Exception as e:
             logger.warning(f"Osprey unavailable — falling back to Python rules: {e}")
@@ -98,6 +99,12 @@ class OspreyClient:
 
     async def stop(self):
         """Clean shutdown."""
+        if self._consume_task is not None:
+            self._consume_task.cancel()
+            try:
+                await self._consume_task
+            except asyncio.CancelledError:
+                pass
         if self._producer:
             await self._producer.stop()
         if self._consumer:
@@ -119,7 +126,7 @@ class OspreyClient:
         event_dict["correlation_id"] = correlation_id
         start = time.monotonic()
 
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[correlation_id] = future
 
         try:

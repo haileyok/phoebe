@@ -1,11 +1,16 @@
 import logging
+import os
 from collections.abc import Callable
 from typing import Literal
 
 import click
 from aiokafka.client import asyncio
 
+from agents.phoebe.config import PHOEBE_CONFIG
 from src.agent.agent import Agent
+from src.agent.config import ModelConfig
+from src.agent.session import InMemorySessionStore
+from src.agent.tools import CodeToolExecutor
 from src.arena.context import ArenaContext
 from src.arena.scorer import Scorer, ScoringConfig
 from src.arena.server import ArenaServer
@@ -123,6 +128,47 @@ def build_safety_classifier() -> SafetyClassifier:
     )
 
 
+def _resolve_model_config(
+    model_api: str | None,
+    model_name: str | None,
+    model_api_key: str | None,
+    model_endpoint: str | None,
+) -> ModelConfig:
+    """Build a ModelConfig from CLI args / env config, injecting the API key into the environment."""
+    api = model_api or CONFIG.model_api
+    name = model_name or CONFIG.model_name
+    key = model_api_key or CONFIG.model_api_key
+    endpoint = model_endpoint or CONFIG.model_endpoint or None
+
+    if api == "anthropic":
+        mc = ModelConfig.anthropic(name)
+        if key:
+            os.environ.setdefault("ANTHROPIC_API_KEY", key)
+    elif api == "openai":
+        mc = ModelConfig.openai(name)
+        if key:
+            os.environ.setdefault("OPENAI_API_KEY", key)
+    elif api == "kimi":
+        mc = ModelConfig.kimi(name)
+        if key:
+            os.environ.setdefault("MOONSHOT_API_KEY", key)
+    elif api == "glm":
+        mc = ModelConfig.glm(name)
+        if key:
+            os.environ.setdefault("ZHIPU_API_KEY", key)
+    elif api == "deepseek":
+        mc = ModelConfig.deepseek(name)
+        if key:
+            os.environ.setdefault("DEEPSEEK_API_KEY", key)
+    else:
+        env_var = "CUSTOM_API_KEY"
+        mc = ModelConfig.custom(name, endpoint or "", env_var)
+        if key:
+            os.environ[env_var] = key
+
+    return mc
+
+
 def build_arena_services(
     clickhouse: Clickhouse,
     x402_client: X402Client,
@@ -132,7 +178,6 @@ def build_arena_services(
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
-    prompt_mode: str = "judge",
 ) -> tuple[ArenaContext, ToolExecutor, Agent, Scorer]:
     arena_ctx = ArenaContext(store=store)
 
@@ -148,13 +193,13 @@ def build_arena_services(
         ctx=tool_context,
     )
 
+    model_config = _resolve_model_config(model_api, model_name, model_api_key, model_endpoint)
+
     agent = Agent(
-        model_api=model_api or CONFIG.model_api,
-        model_name=model_name or CONFIG.model_name,
-        model_api_key=model_api_key or CONFIG.model_api_key,
-        model_endpoint=model_endpoint or CONFIG.model_endpoint or None,
-        tool_executor=executor,
-        prompt_mode=prompt_mode,
+        config=PHOEBE_CONFIG,
+        tool_executor=CodeToolExecutor(executor),
+        session_store=InMemorySessionStore(),
+        model_override=model_config,
     )
 
     scoring_config = ScoringConfig(
@@ -194,7 +239,7 @@ def arena_cmd(
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    model_api: Literal["anthropic", "openai", "openapi"] | None,
+    model_api: Literal["anthropic", "openai", "openapi", "kimi", "glm", "deepseek"] | None,
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
@@ -227,7 +272,7 @@ def arena_cmd(
         model_endpoint=model_endpoint,
     )
 
-    server = ArenaServer(
+    server = ArenaServer(  # noqa
         scorer=scorer,
         store=store,
         submission_fee_usdc=CONFIG.arena_submission_fee,
@@ -280,7 +325,7 @@ def chat(
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    model_api: Literal["anthropic", "openai", "openapi"] | None,
+    model_api: Literal["anthropic", "openai", "openapi", "kimi", "glm", "deepseek"] | None,
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
@@ -328,7 +373,7 @@ def chat(
                 continue
 
             logger.info("User: %s", user_input)
-            response = await agent.chat(user_input)
+            response = await agent.chat(user_input, mode="judge")
             print(f"\nSara: {response}\n")
 
     try:
@@ -346,7 +391,7 @@ def admin_cmd(
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    model_api: Literal["anthropic", "openai", "openapi"] | None,
+    model_api: Literal["anthropic", "openai", "openapi", "kimi", "glm", "deepseek"] | None,
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
@@ -375,7 +420,6 @@ def admin_cmd(
         model_name=model_name,
         model_api_key=model_api_key,
         model_endpoint=model_endpoint,
-        prompt_mode="admin",
     )
 
     async def run():
@@ -396,7 +440,7 @@ def admin_cmd(
                 continue
 
             logger.info("Admin: %s", user_input)
-            response = await agent.chat(user_input)
+            response = await agent.chat(user_input, mode="admin")
             print(f"\nSara: {response}\n")
 
     try:
@@ -416,7 +460,7 @@ def redteam_cmd(
     clickhouse_user: str | None,
     clickhouse_password: str | None,
     clickhouse_database: str | None,
-    model_api: Literal["anthropic", "openai", "openapi"] | None,
+    model_api: Literal["anthropic", "openai", "openapi", "kimi", "glm", "deepseek"] | None,
     model_name: str | None,
     model_api_key: str | None,
     model_endpoint: str | None,
@@ -447,7 +491,6 @@ def redteam_cmd(
         model_name=model_name,
         model_api_key=model_api_key,
         model_endpoint=model_endpoint,
-        prompt_mode="redteam",
     )
 
     async def run():
@@ -496,7 +539,7 @@ def redteam_cmd(
                 "successful findings with attack.log_finding. Focus on coverage gaps first "
                 "(use bounty.taxonomy to check). Report a summary when done."
             )
-            response = await agent.chat(campaign_instruction)
+            response = await agent.chat(campaign_instruction, mode="redteam")
             print(f"\nSara: {response}\n")
 
         else:
@@ -518,13 +561,25 @@ def redteam_cmd(
                     continue
 
                 logger.info("RedTeam: %s", user_input)
-                response = await agent.chat(user_input)
+                response = await agent.chat(user_input, mode="redteam")
                 print(f"\nSara: {response}\n")
 
     try:
         asyncio.run(run())
     except KeyboardInterrupt:
         print("\nRed team session ended.")
+
+
+@cli.command(name="sarabox")
+@click.option("--host", default="0.0.0.0")
+@click.option("--port", default=8001, type=int)
+def sarabox(host: str, port: int):
+    """Run the Sara in a Box API server."""
+    import uvicorn
+    from src.sarabox.server import create_app
+
+    app = create_app()
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":

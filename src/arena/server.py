@@ -9,10 +9,15 @@ Upgrades from prototype:
 - Input validation and sanitization
 """
 
+from __future__ import annotations
+
 import asyncio
 import base64
+import hashlib
+import hmac
 import json
 import logging
+import os
 import time
 from typing import Any
 
@@ -34,6 +39,7 @@ from src.arena.models import (
 )
 from src.arena.scorer import Scorer
 from src.arena.store import ArenaStore
+from src.x402.client import X402Client
 from src.arena.taxonomy import ALL_CATEGORIES, CATEGORY_DESCRIPTIONS, SafetyCategory
 from src.ozone.ozone import Ozone
 from src.ui.dashboard import TNS_DDL, TNSDashboard
@@ -81,6 +87,7 @@ class ArenaServer:
         dev_mode: bool = False,
         safety_classifier: Any | None = None,
         ozone: Ozone | None = None,
+        x402: X402Client | None = None,
     ) -> None:
         self._scorer = scorer
         self._store = store
@@ -91,6 +98,22 @@ class ArenaServer:
         self._rate_limiter = RateLimiter()
         self._safety_classifier = safety_classifier
         self._ozone = ozone
+        self._x402 = x402
+        # FIX 4b: initialize ERC8004 publisher if enabled
+        from src.safety.tee_config import TEEConfig
+        _tee_cfg = TEEConfig()
+        if _tee_cfg.erc8004_enabled and _tee_cfg.erc8004_contract:
+            from src.safety.erc8004 import ERC8004Publisher
+            self._erc8004 = ERC8004Publisher(
+                contract_address=_tee_cfg.erc8004_contract,
+                chain=_tee_cfg.erc8004_chain,
+                rpc_url=_tee_cfg.erc8004_rpc_url,
+                relayer_url=_tee_cfg.erc8004_relayer_url,
+                publisher_address=_tee_cfg.erc8004_publisher_address,
+                private_key=_tee_cfg.erc8004_private_key,
+            )
+        else:
+            self._erc8004 = None
 
     def build_app(self) -> Starlette:
         routes = [
@@ -312,6 +335,11 @@ class ArenaServer:
                 prompts.append(AttackPrompt(**p))
 
         submission = Submission(bounty_id=bounty_id, teamer_wallet=sender, prompts=prompts)
+        # Gate 1: commit to the canonical prompt set before saving
+        _prompt_texts = sorted(p.prompt for p in submission.prompts)
+        submission.commitment_hash = hashlib.sha3_256(
+            json.dumps(_prompt_texts, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         await self._store.save_submission(submission)
 
         tx_hash = request.headers.get("x-payment-tx", payment.get("signature", "")[:16])
@@ -332,6 +360,28 @@ class ArenaServer:
         )
 
     async def _evaluate_submission(self, submission: Submission, bounty: Bounty) -> None:
+        # Gate 1: empty commitment hash is rejected, not bypassed
+        if not submission.commitment_hash:
+            submission.status = SubmissionStatus.REJECTED
+            await self._store.save_submission(submission)
+            logger.warning(
+                "Missing commitment hash for submission %s — rejecting",
+                submission.submission_id,
+            )
+            return
+        _prompt_texts = sorted(p.prompt for p in submission.prompts)
+        _expected = hashlib.sha3_256(
+            json.dumps(_prompt_texts, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        if not hmac.compare_digest(submission.commitment_hash, _expected):
+            submission.status = SubmissionStatus.REJECTED
+            await self._store.save_submission(submission)
+            logger.warning(
+                "Commitment mismatch for submission %s — rejecting",
+                submission.submission_id,
+            )
+            return
+
         submission.status = SubmissionStatus.EVALUATING
         await self._store.save_submission(submission)
 
@@ -346,19 +396,93 @@ class ArenaServer:
                 bounty.status = BountyStatus.EXHAUSTED
             await self._store.save_bounty(bounty)
 
-            if result.payout_usdc > 0:
+            # Gate 3: minimum payout floor
+            MIN_PAYOUT_USDC = float(os.getenv("MIN_PAYOUT_USDC", "1.0"))
+            if result.payout_usdc < MIN_PAYOUT_USDC:
+                logger.info(
+                    "Submission %s scored %.4f USDC — below minimum %.2f, no payout",
+                    submission.submission_id, result.payout_usdc, MIN_PAYOUT_USDC,
+                )
                 await self._store.log_payment(
-                    tx_hash=f"payout-{submission.submission_id}",
-                    from_wallet=self._arena_wallet,
+                    tx_hash="",
+                    from_wallet=bounty.funder_wallet,
                     to_wallet=submission.teamer_wallet,
-                    amount_usdc=result.payout_usdc,
-                    payment_type="bounty_payout",
+                    amount_usdc=0.0,
+                    payment_type="payout_below_minimum",
                     submission_id=submission.submission_id,
                     bounty_id=bounty.bounty_id,
                 )
+                return
 
-            logger.info("Scored %s: %.2f (%.4f USDC)",
-                         submission.submission_id, result.total_score, result.payout_usdc)
+            # Wire actual USDC transfer
+            tx_hash = ""
+            if self._x402 is not None:
+                try:
+                    tx_hash = await self._x402.pay_researcher(
+                        recipient_wallet=submission.teamer_wallet,
+                        amount_usdc=result.payout_usdc,
+                        memo=f"submission:{submission.submission_id}",
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "Payout failed for submission %s: %s",
+                        submission.submission_id, exc,
+                    )
+            else:
+                logger.warning(
+                    "No X402 client — payout SIMULATED for %s", submission.submission_id
+                )
+                tx_hash = f"simulated-{submission.submission_id}"
+
+            await self._store.save_evaluation(result, tx_hash=tx_hash)
+            await self._store.log_payment(
+                tx_hash=tx_hash,
+                from_wallet=bounty.funder_wallet,
+                to_wallet=submission.teamer_wallet,
+                amount_usdc=result.payout_usdc,
+                payment_type="researcher_payout",
+                submission_id=submission.submission_id,
+                bounty_id=bounty.bounty_id,
+            )
+
+            # On-chain attestation: publish verifiable proof of evaluation result
+            if self._erc8004 and tx_hash:
+                result_payload = {
+                    "submission_id": submission.submission_id,
+                    "bounty_id": bounty.bounty_id,
+                    "total_score": result.total_score,
+                    "payout_usdc": result.payout_usdc,
+                    "tx_hash": tx_hash,
+                    "evaluated_at": (
+                        result.evaluated_at.isoformat()
+                        if hasattr(result.evaluated_at, "isoformat")
+                        else str(result.evaluated_at)
+                    ),
+                }
+                result_hash = hashlib.sha3_256(
+                    json.dumps(result_payload, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest()
+                try:
+                    await self._erc8004.record_evaluation_result(
+                        subject=submission.submission_id,
+                        label=f"score:{result.total_score:.4f}",
+                        metadata={"result_hash": result_hash, "tx_hash": tx_hash},
+                    )
+                    logger.info(
+                        "ERC8004 attestation published for submission %s (hash=%s)",
+                        submission.submission_id, result_hash[:16],
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "ERC8004 attestation failed for %s: %s (payout was successful)",
+                        submission.submission_id, exc,
+                    )
+
+            logger.info(
+                "Scored %s: %.2f (%.4f USDC) tx=%s",
+                submission.submission_id, result.total_score, result.payout_usdc,
+                tx_hash[:16] if tx_hash else "none",
+            )
 
         except Exception:
             logger.exception("Evaluation failed for %s", submission.submission_id)
@@ -475,3 +599,7 @@ class ArenaServer:
             "status": "ok", "active_bounties": len(bounties),
             "x402_wallet": self._arena_wallet, "dev_mode": self._dev_mode,
         })
+
+
+# Module-level handle populated by ArenaServer.build_app(); exposed for testing.
+app = None
